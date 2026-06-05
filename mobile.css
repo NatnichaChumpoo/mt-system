@@ -1,0 +1,119 @@
+/* ============================================================
+   MT_System — MOBILE app styles (separate from desktop)
+   Reuses tokens from styles.css; adds phone-native patterns.
+   ============================================================ */
+
+.m-app{
+  height:100%; display:flex; flex-direction:column;
+  background:var(--bg); color:var(--ink);
+  font-family:var(--font);
+}
+
+/* ---- top app header ---- */
+.m-head{
+  flex:none; padding:54px 18px 12px;
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  position:relative; z-index:5;
+}
+.m-head.cream{ background:var(--surface-2); }
+.m-head-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.m-title{ font-family:var(--display); font-size:23px; font-weight:600; letter-spacing:-.01em; line-height:1.1; }
+.m-sub{ font-size:12.5px; color:var(--ink-3); margin-top:2px; }
+
+/* ---- scroll body ---- */
+.m-body{ flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; padding:16px 16px 20px; }
+.m-body > * + *{ margin-top:14px; }
+
+/* ---- bottom tab bar ---- */
+.m-tabs{
+  flex:none; display:flex; align-items:flex-end; justify-content:space-around;
+  background:var(--surface); border-top:1px solid var(--border);
+  padding:8px 6px 26px; position:relative; z-index:6;
+}
+.m-tab{
+  flex:1; display:flex; flex-direction:column; align-items:center; gap:3px;
+  background:none; border:0; cursor:pointer; padding:4px 2px; color:var(--ink-3);
+}
+.m-tab.on{ color:var(--navy); }
+.m-tab .lbl{ font-size:10.5px; font-weight:600; }
+.m-tab-fab{
+  flex:none; width:58px; margin-top:-26px; display:flex; flex-direction:column; align-items:center; gap:4px;
+  background:none; border:0; cursor:pointer; color:var(--ink-2);
+}
+.m-tab-fab .ring{
+  width:56px; height:56px; border-radius:50%;
+  background:var(--navy); color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 8px 20px rgba(35,32,25,.32); border:4px solid var(--bg);
+}
+.m-tab-fab .lbl{ font-size:10.5px; font-weight:700; color:var(--navy); }
+
+/* ---- mobile cards / rows ---- */
+.m-card{ background:var(--surface); border:1px solid var(--border); border-radius:16px; box-shadow:var(--sh-1); }
+.m-card-pad{ padding:16px; }
+.m-sec{ font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-3); margin:2px 2px 9px; }
+
+.m-list{ background:var(--surface); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
+.m-row{ display:flex; align-items:center; gap:13px; padding:14px 15px; width:100%; background:none; border:0; border-bottom:1px solid var(--border); cursor:pointer; text-align:left; color:var(--ink); }
+.m-row:last-child{ border-bottom:0; }
+.m-row:active{ background:var(--surface-2); }
+.m-row .ic{ width:40px; height:40px; border-radius:11px; background:var(--surface-2); display:flex; align-items:center; justify-content:center; flex:none; color:var(--ink-2); }
+.m-row .grow{ flex:1; min-width:0; }
+.m-row .t1{ font-size:14.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.m-row .t2{ font-size:12.5px; color:var(--ink-3); margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* ---- big touch buttons ---- */
+.m-btn{ display:flex; align-items:center; justify-content:center; gap:9px; width:100%;
+  padding:16px; border-radius:14px; font-size:16px; font-weight:700; border:1.5px solid var(--border-2); background:var(--surface); color:var(--ink); cursor:pointer; }
+.m-btn:active{ transform:scale(.99); }
+.m-btn-primary{ background:var(--navy); color:#fff; border-color:var(--navy); }
+.m-btn-danger{ background:var(--red); color:#fff; border-color:var(--red); }
+.m-btn-warn{ background:var(--amber-bg); color:var(--amber-ink); border-color:var(--amber); }
+.m-btn-success{ background:var(--green); color:#fff; border-color:var(--green); }
+.m-btn-lg{ padding:18px; font-size:17px; }
+
+/* ---- big segmented (severity / choices) ---- */
+.m-seg{ display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:8px; }
+.m-seg-v{ display:grid; gap:9px; }
+.m-opt{ padding:15px 10px; border:1.5px solid var(--border-2); border-radius:13px; background:var(--surface); font-weight:700; font-size:15px; text-align:center; color:var(--ink-2); cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; }
+.m-opt:active{ transform:scale(.99); }
+.m-opt.on-low{ border-color:var(--gray); background:var(--gray-bg); color:var(--gray-ink); }
+.m-opt.on-medium{ border-color:var(--blue); background:var(--blue-bg); color:var(--blue-ink); }
+.m-opt.on-high{ border-color:var(--amber); background:var(--amber-bg); color:var(--amber-ink); }
+.m-opt.on-critical{ border-color:var(--red); background:var(--red); color:#fff; }
+.m-opt.on-accent{ border-color:var(--accent); background:var(--accent-bg); color:#6e5530; }
+
+/* ---- form fields (mobile) ---- */
+.m-field{ margin-bottom:0; }
+.m-field > label{ display:block; font-size:13.5px; font-weight:600; color:var(--ink-2); margin-bottom:7px; }
+.m-input,.m-select,.m-textarea{ width:100%; padding:14px 14px; border:1.5px solid var(--border-2); border-radius:13px; background:var(--surface); color:var(--ink); font-size:15.5px; font-family:inherit; }
+.m-input:focus,.m-select:focus,.m-textarea:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(154,123,79,.16); }
+.m-textarea{ resize:none; min-height:96px; line-height:1.5; }
+
+/* ---- bottom sheet ---- */
+.m-sheet-scrim{ position:absolute; inset:0; background:rgba(30,26,18,.42); z-index:40; display:flex; align-items:flex-end; }
+.m-sheet{ width:100%; background:var(--surface); border-radius:24px 24px 0 0; padding:10px 18px calc(18px + env(safe-area-inset-bottom)); box-shadow:0 -12px 40px rgba(30,26,18,.2); animation:m-rise .22s ease; max-height:84%; overflow-y:auto; }
+@keyframes m-rise{ from{ transform:translateY(30px); opacity:.6; } to{ transform:translateY(0); opacity:1; } }
+.m-grab{ width:40px; height:5px; border-radius:99px; background:var(--border-2); margin:4px auto 14px; }
+
+/* success check */
+.m-success{ width:74px; height:74px; border-radius:50%; background:var(--green-bg); color:var(--green); display:flex; align-items:center; justify-content:center; margin:6px auto 14px; }
+
+/* ---- toast (within phone) ---- */
+.m-toast{ position:absolute; left:14px; right:14px; bottom:96px; z-index:55;
+  background:var(--navy-3); color:#fff; padding:13px 15px; border-radius:14px; display:flex; gap:11px; align-items:center; font-size:13.5px; line-height:1.4; box-shadow:var(--sh-3); }
+
+/* pill chips row */
+.m-chips{ display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; }
+.m-chips::-webkit-scrollbar{ display:none; }
+.m-chip{ flex:none; padding:8px 14px; border-radius:99px; background:var(--surface); border:1px solid var(--border); font-size:13px; font-weight:600; color:var(--ink-2); cursor:pointer; }
+.m-chip.on{ background:var(--navy); color:#fff; border-color:var(--navy); }
+
+/* stat tile */
+.m-stat{ background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:15px; }
+.m-stat .v{ font-family:var(--display); font-size:27px; font-weight:600; line-height:1; }
+.m-stat .k{ font-size:12px; color:var(--ink-3); margin-top:6px; }
+
+/* greeting hero */
+.m-hero{ background:linear-gradient(150deg,#ffffff,#f4ecdd); border:1px solid var(--border); border-radius:20px; padding:18px; position:relative; overflow:hidden; }

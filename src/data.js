@@ -63,10 +63,10 @@
 
   /* ---------------- Risk matrix (Rank x Part criticality) ---------------- */
   DATA.riskMatrix = [
-    { rank:"Rank A", sub:"High Impact MC", crit:"Critical Part",  zone:"HIGH",   proto:"Telegram Alert ทันที + แจ้งหัวหน้า (Email)" },
-    { rank:"Rank A", sub:"High Impact MC", crit:"Medium / Low",   zone:"HIGH",   proto:"Telegram Alert ทันที ถึงทีมช่าง" },
-    { rank:"Rank B", sub:"Medium Impact",  crit:"Critical Part",  zone:"MEDIUM", proto:"Email Log + Telegram มาตรฐาน" },
-    { rank:"Rank B", sub:"Medium Impact",  crit:"Medium / Low",   zone:"MEDIUM", proto:"คิวงานบนเว็บ (Mobile Queue)" },
+    { rank:"Rank A", sub:"High Impact MC", crit:"Critical Part",  zone:"HIGH",   proto:"LINE Alert ทันที + แจ้งหัวหน้า" },
+    { rank:"Rank A", sub:"High Impact MC", crit:"Medium / Low",   zone:"HIGH",   proto:"LINE Alert ทันที ถึงทีมช่าง" },
+    { rank:"Rank B", sub:"Medium Impact",  crit:"Critical Part",  zone:"MEDIUM", proto:"Email Log + Standard LINE" },
+    { rank:"Rank B", sub:"Medium Impact",  crit:"Medium / Low",   zone:"MEDIUM", proto:"Mobile Queue (AppSheet)" },
     { rank:"Rank C", sub:"Low Impact",     crit:"Low Criticality",zone:"LOW",    proto:"Work Order Backlog Log" },
   ];
   /* grid form: rows = ranks, cols = part criticality */
@@ -195,6 +195,7 @@
     "Operator":    { name:"Somchai K.",  short:"SK" },
     "Technician":  { name:"Somsak R.",   short:"SR" },
     "Supervisor":  { name:"Prasert W.",  short:"PW" },
+    "Production":   { name:"Kanya P.",    short:"KP" },
     "Store Keeper":{ name:"Wanida T.",   short:"WT" },
     "Manager":     { name:"Direk M.",    short:"DM" },
     "Admin":       { name:"Admin",       short:"AD" },
@@ -204,6 +205,7 @@
     "Operator":"พนักงานหน้างาน",
     "Technician":"ช่างซ่อมบำรุง",
     "Supervisor":"หัวหน้างาน MT",
+    "Production":"ฝ่ายผลิต",
     "Store Keeper":"เจ้าหน้าที่คลัง",
     "Manager":"ผู้บริหาร",
     "Admin":"ผู้ดูแลระบบ",
@@ -213,8 +215,36 @@
   DATA.fmtMoney = n => "฿" + Number(n||0).toLocaleString("en-US");
   DATA.fmtNum = n => Number(n||0).toLocaleString("en-US");
   DATA.partByCode = code => DATA.parts.find(p=>p.code===code);
-  DATA.machineByCode = code => DATA.machines.find(m=>m.code===code);
+  DATA.machineByCode = code => DATA.machines.find(m=>m.code===code);
   DATA.requestsForMachine = code => DATA.requests.filter(r=>r.mc===code);
 
+  /* ----------------------------------------------------------
+     Production approval decisions — persisted in localStorage so
+     the result is shared across the desktop and mobile views
+     (same browser). Shape: { [reqNo]: { decision:"Approved"|"Rejected", reason } }
+     Purely additive: unused by deliverables that don't reference it.
+     ---------------------------------------------------------- */
+  const PROD_KEY = "mt_prod_decisions";
+  DATA.prodGet = () => { try { return JSON.parse(localStorage.getItem(PROD_KEY) || "{}"); } catch(e){ return {}; } };
+  DATA.prodFor = no => DATA.prodGet()[no];
+  DATA.prodSet = (no, decision, reason) => {
+    const m = DATA.prodGet();
+    if (decision === null) delete m[no]; else m[no] = { decision, reason: reason || "" };
+    localStorage.setItem(PROD_KEY, JSON.stringify(m));
+    return m;
+  };
+  /* status descriptor used by both desktop & mobile for consistent badges */
+  DATA.prodStatus = no => {
+    const d = DATA.prodGet()[no];
+    if (!d)                       return { decision:"Pending",  cls:"b-amber", icon:null,    th:"รออนุมัติจากฝ่ายผลิต", en:"Pending Production Review", dot:"var(--amber)" };
+    if (d.decision === "Approved")return { decision:"Approved", cls:"b-green", icon:"check", th:"อนุมัติโดยฝ่ายผลิต",   en:"Approved by Production",   dot:"var(--green)", reason:d.reason };
+    return                               { decision:"Rejected", cls:"b-red",   icon:"x",     th:"ไม่อนุมัติโดยฝ่ายผลิต", en:"Rejected by Production",   dot:"var(--red)",   reason:d.reason };
+  };
+
   window.DATA = DATA;
+
+  /* one-time demo seed so the Production status is meaningful on first load */
+  if (localStorage.getItem(PROD_KEY) === null) {
+    DATA.prodSet("REQ-2026-001", "Approved", "ทดสอบเดินเครื่องผ่าน — กลับเข้าไลน์ผลิตได้ปกติ");
+  }
 })();
