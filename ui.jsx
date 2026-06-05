@@ -20,6 +20,7 @@ function Icon({ name, size = 18, style }) {
     x: <path d="M18 6 6 18M6 6l12 12"/>,
     alert: <><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></>,
     bell: <><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></>,
+    menu: <><path d="M3 6h18M3 12h18M3 18h18"/></>,
     plus: <path d="M12 5v14M5 12h14"/>,
     search: <><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></>,
     chevR: <path d="m9 6 6 6-6 6"/>,

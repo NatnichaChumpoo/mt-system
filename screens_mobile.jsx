@@ -10,15 +10,23 @@ function LoginScreen({ ctx }) {
   const [role, setRole] = useState("Operator");
   const [user, setUser] = useState("");
   const [pw, setPw] = useState("");
-  const roles = ["Operator", "Technician", "Supervisor", "Store Keeper", "Manager", "Admin"];
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth <= 860);
+  useEffect(() => {
+    const on = () => setNarrow(window.innerWidth <= 860);
+    on();
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  const roles = ["Operator", "Technician", "Supervisor", "Production", "Store Keeper", "Manager", "Admin"];
   const homeFor = {
-    "Operator": "m_machine", "Technician": "m_queue", "Supervisor": "d_verify",
+    "Operator": "m_machine", "Technician": "m_queue", "Supervisor": "d_verify", "Production": "d_prodverify",
     "Store Keeper": "d_master", "Manager": "d_dashboard", "Admin": "d_admin"
   };
   const submit = (e) => {e.preventDefault();ctx.login(role, homeFor[role]);};
   return (
     <div style={{ minHeight: "100vh", display: "flex", background: "var(--bg)" }}>
-      {/* left brand panel — light cream */}
+      {/* left brand panel — light cream (hidden on phones) */}
+      {!narrow &&
       <div style={{ flex: "1 1 0", minWidth: 0, background: "linear-gradient(155deg,#ffffff 0%,#f6efe3 55%,#efe5d4 100%)", color: "var(--ink)", borderRight: "1px solid var(--border)",
         display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "56px 56px", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", inset: 0, opacity: 1, backgroundImage: "radial-gradient(700px 380px at 80% 6%, rgba(154,123,79,.16), transparent 62%)" }}></div>
@@ -41,9 +49,16 @@ function LoginScreen({ ctx }) {
           )}
         </div>
       </div>
+      }
       {/* right form */}
-      <div style={{ flex: "0 0 clamp(380px, 38%, 560px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 48px", background: "var(--surface)" }}>
+      <div style={{ flex: narrow ? "1 1 0" : "0 0 clamp(380px, 38%, 560px)", display: "flex", alignItems: "center", justifyContent: "center", padding: narrow ? "32px 20px" : "40px 48px", background: "var(--surface)" }}>
         <form onSubmit={submit} style={{ width: "100%", maxWidth: 380 }}>
+          {narrow &&
+          <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 26 }}>
+            <span style={{ width: 42, height: 42, borderRadius: 12, background: "var(--navy)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="wrench" size={21} /></span>
+            <div><div style={{ fontFamily: "var(--display)", fontSize: 18, fontWeight: 600, lineHeight: 1.1 }}>Maintenance System</div><div className="tiny" style={{ color: "var(--ink-3)", letterSpacing: ".04em" }}>Machine Maintenance Console</div></div>
+          </div>
+          }
           <div style={{ marginBottom: 30 }}>
             <div className="h-lg">เข้าสู่ระบบ</div>
             <div className="muted small" style={{ marginTop: 4 }}>ยินดีต้อนรับ — กรุณาเข้าสู่ระบบเพื่อใช้งาน</div>
@@ -59,7 +74,7 @@ function LoginScreen({ ctx }) {
           <div className="field">
             <label>เข้าสู่ระบบในบทบาท (Role)</label>
             <select className="select" value={role} onChange={(e) => setRole(e.target.value)}>
-              {roles.map((r) => <option key={r} value={r}>{r} — {Dm.roleLabelTH[r]}</option>)}
+              {roles.map((r) => <option key={r} value={r}>{r} — {Dm.roleLabelTH[r] || (r === "Production" ? "ฝ่ายผลิต" : r)}</option>)}
             </select>
             <div className="hint">ตัวอย่าง prototype — เลือกบทบาทเพื่อดูเมนูและสิทธิ์ที่ต่างกัน</div>
           </div>
@@ -76,10 +91,9 @@ function LoginScreen({ ctx }) {
 /* ---------------- 5.2 Machine (after QR scan) ---------------- */
 function MachineScreen({ ctx }) {
   const mc = Dm.machineByCode(ctx.params.mc || Dm.scannedMachine);
-  const hist = Dm.requestsForMachine(mc.code);
   const running = mc.status === "Running";
   return (
-    <div className="grid" style={{ gridTemplateColumns: "1.15fr .85fr", alignItems: "start" }}>
+    <div className="stack" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="card" style={{ overflow: "hidden" }}>
         <div style={{ background: "var(--surface-2)", borderBottom: "1px solid var(--border)", padding: "22px 22px 24px", position: "relative", overflow: "hidden" }}>
           <div style={{ position: "absolute", inset: 0, backgroundImage: "radial-gradient(360px 180px at 92% 0%, rgba(154,123,79,.12), transparent 62%)" }}></div>
@@ -96,47 +110,47 @@ function MachineScreen({ ctx }) {
             <span className="chip">Criticality {mc.crit}</span>
           </div>
         </div>
-        <div style={{ padding: 22, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+        <div style={{ padding: 22, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 18 }}>
           {[["แผนก", mc.dept], ["ตำแหน่ง", mc.zone], ["ผู้ผลิต", mc.maker], ["รุ่น", mc.model], ["ติดตั้ง", mc.install], ["กลุ่มเครื่อง", mc.group]].map(([k, v]) =>
           <div key={k}><div className="tiny muted-2">{k}</div><div className="small" style={{ fontWeight: 600 }}>{v}</div></div>
           )}
         </div>
       </div>
 
-      <div className="stack">
-        <div style={{ display: "grid", gap: 11 }}>
-          <button className="btn btn-danger btn-xl btn-block" onClick={() => ctx.go("m_report", { mc: mc.code })}>
-            <Icon name="wrench" size={20} /> แจ้งซ่อมเครื่องนี้
-          </button>
-          <button className="btn btn-xl btn-block" style={{ borderColor: "var(--amber)", color: "var(--amber-ink)", background: "var(--amber-bg)" }}
-          onClick={() => ctx.go("m_lowpart", { mc: mc.code })}>
-            <Icon name="box" size={20} /> แจ้งอะไหล่ใกล้หมด
-          </button>
-        </div>
+      {/* repair action — directly under the machine info */}
+      <button className="btn btn-danger btn-xl btn-block" onClick={() => ctx.go("m_report", { mc: mc.code })}>
+        <Icon name="wrench" size={20} /> แจ้งซ่อมเครื่องนี้
+      </button>
+    </div>);
 
-        <div className="panel">
-          <div className="panel-head" style={{ padding: "14px 18px" }}>
-            <div className="h-sm">ประวัติการแจ้งซ่อมล่าสุด</div>
-            <span className="chip">{hist.length} รายการ</span>
-          </div>
-          <div style={{ padding: 14, display: "grid", gap: 10 }}>
-            {hist.length === 0 && <div className="empty">ยังไม่มีประวัติการแจ้งซ่อม</div>}
-            {hist.map((r) =>
-            <button key={r.no} className="card card-pad" style={{ textAlign: "left", cursor: "pointer", padding: 14 }}
-            onClick={() => ctx.go("m_detail", { reqNo: r.no })}>
-                <div className="row between">
-                  <span className="mono small" style={{ fontWeight: 600 }}>{r.no}</span>
+}
+
+/* ---------------- Recent repair history (own tab) ---------------- */
+function RecentHistory({ ctx }) {
+  const rows = [...Dm.requests].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div className="panel">
+      <div className="panel-head" style={{ padding: "14px 18px" }}>
+        <div className="h-sm">ประวัติการแจ้งซ่อมล่าสุด</div>
+        <span className="chip">{rows.length} รายการ</span>
+      </div>
+      <div style={{ padding: 14, display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 12 }}>
+        {rows.length === 0 && <div className="empty">ยังไม่มีประวัติการแจ้งซ่อม</div>}
+        {rows.map((r) =>
+        <button key={r.no} className="card card-pad" style={{ textAlign: "left", cursor: "pointer", padding: 14 }}
+        onClick={() => ctx.go("m_detail", { reqNo: r.no })}>
+            <div className="row between">
+              <span className="mono small" style={{ fontWeight: 600 }}>{r.no}</span>
               <JobBadge status={r.status} />
             </div>
-            <div className="small" style={{ margin: "7px 0", color: "var(--ink)" }}>{r.problem}</div>
+            <div className="row gap-sm" style={{ margin: "6px 0" }}><span className="mono tiny" style={{ fontWeight: 600 }}>{r.mc}</span><span className="tiny muted">{r.mcName}</span></div>
+            <div className="small" style={{ margin: "0 0 8px", color: "var(--ink)" }}>{r.problem}</div>
             <div className="row between">
               <PriorityTag p={r.priority} />
               <span className="tiny muted-2 mono">{r.date}</span>
             </div>
           </button>
-            )}
-          </div>
-        </div>
+        )}
       </div>
     </div>);
 
@@ -507,6 +521,8 @@ function MobileDetail({ ctx }) {
   const use = Dm.usage[r.no] || [];
   const total = use.reduce((s, u) => s + u.unit * u.qty, 0);
   const steps = buildTimeline(r, rep);
+  // Production approval status — shared, persisted via DATA.prodStatus (localStorage)
+  const prodInfo = Dm.prodStatus(r.no);
   return (
     <div>
       <div className="card card-pad" style={{ marginBottom: 14 }}>
@@ -523,6 +539,18 @@ function MobileDetail({ ctx }) {
       <div className="card card-pad" style={{ marginBottom: 14 }}>
         <div className="h-sm" style={{ marginBottom: 14 }}>สถานะการดำเนินงาน</div>
         <Timeline steps={steps} />
+        {r.status === "Completed" &&
+        <div style={{ marginTop: 4, paddingTop: 14, borderTop: "1px solid var(--border)", display: "flex", gap: 12, alignItems: "flex-start" }}>
+            <span style={{ width: 20, height: 20, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: prodInfo.dot, color: "#fff" }}>
+              {prodInfo.icon ? <Icon name={prodInfo.icon} size={12} /> : <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fff" }}></span>}
+            </span>
+            <div>
+              <div className="tl-title">สถานะการอนุมัติ (ฝ่ายผลิต)</div>
+              <span className={"badge " + prodInfo.cls} style={{ marginTop: 5 }}><span className="dot"></span>{prodInfo.th}</span>
+              {prodInfo.reason && <div className="small muted" style={{ marginTop: 6 }}>หมายเหตุ: {prodInfo.reason}</div>}
+            </div>
+          </div>
+        }
       </div>
       {rep &&
       <div className="card card-pad" style={{ marginBottom: 14 }}>
@@ -564,4 +592,4 @@ function buildTimeline(r, rep) {
   return steps;
 }
 
-Object.assign(window, { LoginScreen, MachineScreen, LowPartForm, ReportForm, TechQueue, RepairForm, MobileRequests, MobileDetail, buildTimeline });
+Object.assign(window, { LoginScreen, MachineScreen, RecentHistory, LowPartForm, ReportForm, TechQueue, RepairForm, MobileRequests, MobileDetail, buildTimeline });

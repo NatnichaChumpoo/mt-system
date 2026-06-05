@@ -13,10 +13,12 @@ const SCREENS = {
   m_queue: { comp: TechQueue, field: true, title: "คิวงานซ่อม", sub: "รายการงานที่รอและกำลังดำเนินการ", wide: true },
   m_repair: { comp: RepairForm, field: true, title: "บันทึกการซ่อม", sub: "บันทึกผลและอะไหล่ที่ใช้", back: true },
   m_requests: { comp: MobileRequests, field: true, title: "ใบแจ้งซ่อม", sub: "ติดตามสถานะใบแจ้งซ่อม", wide: true },
+  m_history: { comp: RecentHistory, field: true, title: "ประวัติการแจ้งซ่อมล่าสุด", sub: "รายการแจ้งซ่อมทั้งหมด เรียงล่าสุด", wide: true },
   m_detail: { comp: MobileDetail, field: true, title: "รายละเอียดใบแจ้ง", back: true },
   d_requests: { comp: RequestList, shell: "desktop" },
   d_detail: { comp: RequestDetail, shell: "desktop" },
   d_verify: { comp: VerifyQueue, shell: "desktop" },
+  d_prodverify: { comp: ProductionVerify, shell: "desktop" },
   d_pm: { comp: PmSchedule, shell: "desktop" },
   d_master: { comp: MasterData, shell: "desktop" },
   d_reorder: { comp: ReorderList, shell: "desktop" },
@@ -28,7 +30,7 @@ const SCREENS = {
 /* ---- per-role navigation (all desktop web) ---- */
 const NAV = {
   "Operator": { home: "m_machine", menu: [
-    ["แจ้งซ่อม", [["m_machine", "เครื่องจักร (QR)", "machine"], ["m_requests", "ใบแจ้งของฉัน", "list"]]]]
+    ["แจ้งซ่อม", [["m_machine", "เครื่องจักร (QR)", "machine"], ["m_requests", "ใบแจ้งของฉัน", "list"], ["m_history", "ประวัติการแจ้งซ่อมล่าสุด", "clock"]]]]
   },
   "Technician": { home: "m_queue", menu: [
     ["งานช่าง", [["m_queue", "คิวงานซ่อม", "wrench"], ["m_requests", "ใบแจ้งทั้งหมด", "list"]]]]
@@ -36,6 +38,9 @@ const NAV = {
   "Supervisor": { home: "d_verify", menu: [
     ["งานซ่อม", [["d_verify", "ตรวจรับงาน", "checkCircle"], ["d_requests", "ใบแจ้งซ่อม", "list"], ["d_pm", "แผน PM", "cal"]]],
     ["ภาพรวม", [["d_dashboard", "Dashboard", "gauge"]]]]
+  },
+  "Production": { home: "d_prodverify", menu: [
+    ["ฝ่ายผลิต", [["d_prodverify", "ตรวจสอบใบแจ้งซ่อม", "checkCircle"], ["d_requests", "ใบแจ้งซ่อมทั้งหมด", "list"]]]]
   },
   "Store Keeper": { home: "d_master", menu: [
     ["คลังอะไหล่", [["d_master", "Master Data", "box"], ["d_reorder", "รายการสั่งซื้อ", "truck"], ["d_stock", "รับเข้า/เบิกออก", "download"]]]]
@@ -48,7 +53,26 @@ const NAV = {
   }
 };
 
-const ROLES = ["Operator", "Technician", "Supervisor", "Store Keeper", "Manager", "Admin"];
+const ROLES = ["Operator", "Technician", "Supervisor", "Production", "Store Keeper", "Manager", "Admin"];
+
+/* responsive: true when viewport is phone/tablet width */
+function useIsMobile(bp) {
+  const q = bp || 860;
+  const [m, setM] = uS(() => typeof window !== "undefined" && window.innerWidth <= q);
+  uE(() => {
+    const on = () => setM(window.innerWidth <= q);
+    on();
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, [q]);
+  return m;
+}
+
+/* Production role identity is scoped to this app (not in shared data.js) */
+const EXTRA_USERS = { "Production": { name: "Kanya P.", short: "KP" } };
+const EXTRA_LABELS = { "Production": "ฝ่ายผลิต" };
+const userOf = (r) => DATA.roleUser[r] || EXTRA_USERS[r] || { name: r, short: r.slice(0, 2) };
+const labelOf = (r) => DATA.roleLabelTH[r] || EXTRA_LABELS[r] || r;
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "fontFamily": "IBM Plex Sans Thai",
@@ -64,6 +88,10 @@ function App() {
   const [stack, setStack] = uS([]);
   const [toast, setToast] = uS(null);
   const [roleMenu, setRoleMenu] = uS(false);
+  const isMobile = useIsMobile(860);
+  const [drawer, setDrawer] = uS(false);
+  /* close the drawer whenever we navigate or switch role */
+  uE(() => {setDrawer(false);}, [screen, role]);
 
   uE(() => {
     const fams = {
@@ -86,7 +114,7 @@ function App() {
   const ctx = { go, back, login, role, params, toast: showToast };
   const meta = SCREENS[screen] || SCREENS.login;
   const Comp = meta.comp;
-  const user = DATA.roleUser[role];
+  const user = userOf(role);
 
   /* ---------- login (full) ---------- */
   if (meta.shell === "full") {
@@ -102,7 +130,7 @@ function App() {
         <span className="avatar" style={{ width: 32, height: 32 }}>{user.short}</span>
         <span style={{ textAlign: "left", lineHeight: 1.25 }}>
           <span style={{ display: "block", fontSize: 13, fontWeight: 700 }}>{user.name}</span>
-          <span style={{ display: "block", fontSize: 11, color: "var(--ink-3)" }}>{role} · {DATA.roleLabelTH[role]}</span>
+          <span style={{ display: "block", fontSize: 11, color: "var(--ink-3)" }}>{role} · {labelOf(role)}</span>
         </span>
         <Icon name="chevD" size={15} style={{ color: "var(--ink-3)" }} />
       </button>
@@ -111,7 +139,7 @@ function App() {
           <div className="eyebrow" style={{ padding: "12px 14px 6px" }}>สลับบทบาท · prototype</div>
           {ROLES.map((r) =>
       <button key={r} className="row between" style={{ width: "100%", padding: "10px 14px", background: r === role ? "var(--surface-2)" : "transparent", border: 0, cursor: "pointer", textAlign: "left" }} onClick={() => switchRole(r)}>
-              <span><span style={{ fontWeight: 600, fontSize: 13.5 }}>{r}</span><span className="tiny muted-2" style={{ display: "block" }}>{DATA.roleLabelTH[r]}</span></span>
+              <span><span style={{ fontWeight: 600, fontSize: 13.5 }}>{r}</span><span className="tiny muted-2" style={{ display: "block" }}>{labelOf(r)}</span></span>
               {r === role && <Icon name="check" size={15} style={{ color: "var(--accent)" }} />}
             </button>
       )}
@@ -128,8 +156,14 @@ function App() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      {/* sidebar — white premium */}
-      <aside style={{ width: 256, flex: "none", background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh" }}>
+      {/* backdrop for mobile drawer */}
+      {isMobile && drawer &&
+      <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, background: "rgba(16,28,40,.42)", zIndex: 55, backdropFilter: "blur(1px)" }}></div>
+      }
+      {/* sidebar — white premium (drawer on mobile) */}
+      <aside style={isMobile ?
+      { width: 280, maxWidth: "84vw", flex: "none", background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, bottom: 0, height: "100vh", zIndex: 60, transform: drawer ? "translateX(0)" : "translateX(-102%)", transition: "transform .26s cubic-bezier(.4,0,.2,1)", boxShadow: drawer ? "var(--sh-3)" : "none" } :
+      { width: 256, flex: "none", background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh" }}>
         <div style={{ padding: "22px 20px 20px", display: "flex", alignItems: "center", gap: 12, borderBottom: "1px solid var(--border)" }}>
           <span style={{ width: 42, height: 42, borderRadius: 12, background: "var(--navy)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="wrench" size={21} /></span>
           <div>
@@ -144,7 +178,8 @@ function App() {
               {items.map(([s, l, ic]) => {
               const active = screen === s ||
               s === "d_verify" && screen === "d_detail" && role === "Supervisor" ||
-              s === "d_requests" && screen === "d_detail" && role !== "Supervisor" ||
+              s === "d_prodverify" && screen === "d_detail" && role === "Production" ||
+              s === "d_requests" && screen === "d_detail" && role !== "Supervisor" && role !== "Production" ||
               s === "m_machine" && screen === "m_report" ||
               s === "m_machine" && screen === "m_lowpart" ||
               s === "m_queue" && screen === "m_repair" ||
@@ -174,23 +209,23 @@ function App() {
 
       {/* main */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <header style={{ height: 64, flex: "none", background: "rgba(255,255,255,.82)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 28px", position: "sticky", top: 0, zIndex: 30 }}>
-          <div className="row gap-sm">
-            <span className="eyebrow">{DATA.roleLabelTH[role]}</span>
-            <span style={{ color: "var(--ink-3)" }}>/</span>
-            <span className="small" style={{ fontWeight: 600 }}>{screenTitle(screen, meta)}</span>
+        <header style={{ height: 64, flex: "none", background: "rgba(255,255,255,.82)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "0 14px" : "0 28px", position: "sticky", top: 0, zIndex: 30 }}>
+          <div className="row gap-sm" style={{ minWidth: 0 }}>
+            {isMobile &&
+            <button className="icon-btn" onClick={() => setDrawer(true)} aria-label="เมนู"><Icon name="menu" size={20} /></button>
+            }
+            <span className="eyebrow" style={{ whiteSpace: "nowrap" }}>{labelOf(role)}</span>
+            {!isMobile && <span style={{ color: "var(--ink-3)" }}>/</span>}
+            {!isMobile && <span className="small" style={{ fontWeight: 600 }}>{screenTitle(screen, meta)}</span>}
           </div>
           <div className="row gap-sm">
-            <button className="icon-btn" onClick={() => showToast("3 การแจ้งเตือนใหม่", "mail")} style={{ position: "relative" }}>
-              <Icon name="bell" size={18} /><span style={{ position: "absolute", top: 8, right: 9, width: 7, height: 7, borderRadius: "50%", background: "var(--red)" }}></span>
-            </button>
             <RoleSwitch />
           </div>
         </header>
 
-        <main style={{ flex: 1, padding: "30px 32px 60px", width: "100%" }}>
+        <main style={{ flex: 1, padding: isMobile ? "18px 14px 88px" : "30px 32px 60px", width: "100%" }}>
           {meta.field ?
-          <div style={{ maxWidth: meta.wide ? 960 : 760, margin: "0 auto" }}>
+          <div style={{ maxWidth: isMobile ? "100%" : meta.wide ? 960 : 760, margin: "0 auto" }}>
               <div className="row between wrap" style={{ marginBottom: 20, gap: 12 }}>
                 <div className="row gap-sm">
                   {meta.back && <button className="icon-btn" onClick={back}><Icon name="chevL" size={18} /></button>}
@@ -203,7 +238,7 @@ function App() {
               <Comp ctx={ctx} />
             </div> :
 
-          <div style={{ maxWidth: 1340 }}><Comp ctx={ctx} /></div>
+          <div style={{ maxWidth: isMobile ? "100%" : 1340 }}><Comp ctx={ctx} /></div>
           }
         </main>
       </div>
@@ -226,7 +261,7 @@ function tweaksPanel(t, setTweak) {
 
 function screenTitle(s, meta) {
   if (meta && meta.field) return meta.title;
-  const m = { d_requests: "ใบแจ้งซ่อม", d_detail: "รายละเอียดใบแจ้ง", d_verify: "ตรวจรับงาน", d_pm: "แผน PM",
+  const m = { d_requests: "ใบแจ้งซ่อม", d_detail: "รายละเอียดใบแจ้ง", d_verify: "ตรวจรับงาน", d_prodverify: "ตรวจสอบใบแจ้งซ่อม (ฝ่ายผลิต)", d_pm: "แผน PM",
     d_master: "คลังอะไหล่ Master Data", d_reorder: "รายการสั่งซื้อ", d_stock: "รับเข้า/เบิกออก",
     d_dashboard: "Dashboard ผู้บริหาร", d_admin: "ผู้ดูแลระบบ" };
   return m[s] || "";
