@@ -64,6 +64,13 @@ function App() {
   const [stack, setStack] = uS([]);
   const [toast, setToast] = uS(null);
   const [roleMenu, setRoleMenu] = uS(false);
+  /* live update: re-render เมื่อ api-bridge แจ้งว่าสถานะเปลี่ยน (คงหน้าจอเดิม) */
+  const [, __setTick] = uS(0);
+  uE(() => {
+    const h = () => __setTick((x) => x + 1);
+    window.addEventListener("mt-data-refresh", h);
+    return () => window.removeEventListener("mt-data-refresh", h);
+  }, []);
 
   uE(() => {
     const fams = {
@@ -232,4 +239,7 @@ function screenTitle(s, meta) {
   return m[s] || "";
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+/* dual-mode mount: static data.js mounts now / bridge waits for "mt-data-ready" */
+function __mtMount() { ReactDOM.createRoot(document.getElementById("root")).render(<App />); }
+if (window.__MT_READY || (window.DATA && window.DATA.machines)) __mtMount();
+else window.addEventListener("mt-data-ready", __mtMount, { once: true });

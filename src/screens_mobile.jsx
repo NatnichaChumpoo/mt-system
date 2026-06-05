@@ -76,6 +76,13 @@ function LoginScreen({ ctx }) {
 /* ---------------- 5.2 Machine (after QR scan) ---------------- */
 function MachineScreen({ ctx }) {
   const mc = Dm.machineByCode(ctx.params.mc || Dm.scannedMachine);
+  if (!mc) return (
+    <div className="card card-pad" style={{ textAlign: "center", padding: 40 }}>
+      <Icon name="alert" size={28} style={{ color: "var(--red)" }} />
+      <div className="h-sm" style={{ marginTop: 10 }}>ไม่พบข้อมูลเครื่องจักร</div>
+      <div className="muted small" style={{ marginTop: 4 }}>รหัส: {ctx.params.mc || Dm.scannedMachine}</div>
+    </div>
+  );
   const hist = Dm.requestsForMachine(mc.code);
   const running = mc.status === "Running";
   return (
@@ -148,6 +155,12 @@ function LowPartForm({ ctx }) {
   const [code, setCode] = useState("");
   const [remain, setRemain] = useState("");
   const [urgency, setUrgency] = useState("ด่วน");
+  if (!mc) return (
+    <div className="card card-pad" style={{ textAlign: "center", padding: 40 }}>
+      <div className="h-sm">ไม่พบข้อมูลเครื่องจักร</div>
+      <div className="muted small" style={{ marginTop: 4 }}>รหัส: {ctx.params.mc || Dm.scannedMachine}</div>
+    </div>
+  );
   const part = Dm.partByCode(code);
   const lowParts = Dm.parts.filter(p => p.status !== "normal").sort((a,b)=>a.cur-b.cur).slice(0, 6);
   const urgencies = [["ปกติ","low"],["ด่วน","high"],["ด่วนมาก","critical"]];
@@ -271,11 +284,35 @@ function ReportForm({ ctx }) {
   const [type, setType] = useState("งานซ่อม");
   const [sev, setSev] = useState("High");
   const [desc, setDesc] = useState("");
+  const [reporter, setReporter] = useState("Somchai K.");
+  const [submitting, setSubmitting] = useState(false);
   const sevs = [["Low", "Low"], ["Medium", "Medium"], ["High", "High"], ["Critical", "Critical"]];
-  const submit = () => {
-    if (!desc.trim()) {ctx.toast("กรุณากรอกอาการเสีย", "error");return;}
-    ctx.toast("ส่งใบแจ้งซ่อมแล้ว · ระบบส่งอีเมลแจ้งทีมช่างและหัวหน้างาน", "mail");
-    ctx.go("m_machine", { mc: mc.code });
+
+  if (!mc) return (
+    <div className="card card-pad" style={{ textAlign: "center", padding: 40 }}>
+      <div className="h-sm">ไม่พบข้อมูลเครื่องจักร</div>
+      <div className="muted small" style={{ marginTop: 4 }}>รหัส: {ctx.params.mc || Dm.scannedMachine}</div>
+    </div>
+  );
+
+  const submit = async () => {
+    if (submitting) return;
+    if (!desc.trim()) { ctx.toast("กรุณากรอกอาการเสีย", "error"); return; }
+    if (typeof window.DATA?.createRequest === "function") {
+      setSubmitting(true);
+      try {
+        const result = await window.DATA.createRequest({ machineCode: mc.code, problem: desc.trim(), priority: sev, reporterName: reporter.trim() || null, type });
+        if (typeof Dm.refresh === "function") { await Dm.refresh(); window.dispatchEvent(new Event("mt-data-refresh")); }
+        ctx.toast("ส่งใบแจ้งซ่อมแล้ว · " + result, "mail");
+        ctx.go("m_requests");
+      } catch (err) {
+        console.error("[report-submit] error", err);
+        ctx.toast("ส่งใบแจ้งซ่อมไม่สำเร็จ", "error");
+      } finally { setSubmitting(false); }
+    } else {
+      ctx.toast("ส่งใบแจ้งซ่อมแล้ว · ระบบส่งอีเมลแจ้งทีมช่างและหัวหน้างาน", "mail");
+      ctx.go("m_requests");
+    }
   };
   return (
     <div>
@@ -326,7 +363,7 @@ function ReportForm({ ctx }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 }}>
         <div className="field">
           <label>ผู้แจ้ง</label>
-          <input className="input" defaultValue="Somchai K." />
+          <input className="input" value={reporter} onChange={(e) => setReporter(e.target.value)} />
         </div>
         <div className="field">
           <label>แผนก</label>
@@ -339,8 +376,8 @@ function ReportForm({ ctx }) {
         <div className="small" style={{ color: "var(--blue-ink)" }}>เมื่อส่ง ระบบจะส่งอีเมล/LINE แจ้งทีมช่างและหัวหน้างาน MT โดยอัตโนมัติ</div>
       </div>
 
-      <button className="btn btn-primary btn-lg btn-block" onClick={submit}>
-        <Icon name="check" size={18} /> ส่งใบแจ้งซ่อม
+      <button className="btn btn-primary btn-lg btn-block" onClick={submit} disabled={submitting}>
+        <Icon name="check" size={18} /> {submitting ? "กำลังส่ง..." : "ส่งใบแจ้งซ่อม"}
       </button>
     </div>);
 
@@ -399,10 +436,15 @@ function TechQueue({ ctx }) {
 
 /* ---------------- 5.7 Repair form (technician) ---------------- */
 function RepairForm({ ctx }) {
-  const r = Dm.requests.find((x) => x.no === ctx.params.reqNo) || Dm.requests[1];
+  const r = Dm.requests.find((x) => x.no === ctx.params.reqNo) || null;
   const [cat, setCat] = useState("Mechanical");
   const [cause, setCause] = useState("เสื่อมสภาพ");
+  const [rootInput, setRootInput] = useState("");
+  const [actionInput, setActionInput] = useState("");
+  const [startTime, setStartTime] = useState("13:15");
+  const [endTime, setEndTime] = useState("15:30");
   const [rows, setRows] = useState([{ code: "", qty: 1 }]);
+  const [saving, setSaving] = useState(false);
   const cats = ["Electrical", "Mechanical", "Hydraulic", "Pneumatic", "Electronic", "Other"];
   const causes = ["ใช้งานผิดวิธี", "เสื่อมสภาพ", "ติดตั้งเพิ่ม"];
   const parts = Dm.parts;
@@ -410,7 +452,50 @@ function RepairForm({ ctx }) {
   const setRow = (i, patch) => setRows((rs) => rs.map((x, j) => j === i ? { ...x, ...patch } : x));
   const addRow = () => setRows((rs) => [...rs, { code: "", qty: 1 }]);
   const delRow = (i) => setRows((rs) => rs.filter((_, j) => j !== i));
-  const save = () => {ctx.toast("บันทึกผลซ่อมแล้ว · ระบบตัดสต็อกอะไหล่อัตโนมัติ", "mail");ctx.go("m_queue");};
+
+  if (!r) return (
+    <div className="card card-pad" style={{ textAlign: "center", padding: 40 }}>
+      <div className="h-sm">ไม่พบใบแจ้งซ่อม</div>
+      <div className="muted small" style={{ marginTop: 6 }}>กรุณาเลือกงานจากคิวงาน</div>
+      <button className="btn btn-sm" style={{ marginTop: 14 }} onClick={() => ctx.go("m_queue")}>กลับคิวงาน</button>
+    </div>
+  );
+
+  const calcHrs = (s, e) => {
+    if (!s || !e) return 0;
+    const [sh, sm] = s.split(":").map(Number);
+    const [eh, em] = e.split(":").map(Number);
+    return Math.max(0, Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 100) / 100);
+  };
+
+  const save = async () => {
+    if (saving) return;
+    if (!rootInput.trim() || !actionInput.trim()) {
+      ctx.toast("กรุณากรอกสาเหตุและวิธีแก้ไข", "error");
+      return;
+    }
+    const usedParts = rows.filter((row) => row.code).map((row) => {
+      const p = Dm.partByCode(row.code);
+      return { code: row.code, qty: row.qty, unit: p?.price };
+    });
+    const repair = { root: rootInput.trim(), action: actionInput.trim(), hrs: calcHrs(startTime, endTime), verify: "Pending" };
+    if (typeof window.DATA?.saveRepair === "function") {
+      setSaving(true);
+      try {
+        await window.DATA.saveRepair(r.no, repair, usedParts);
+        if (typeof Dm.refresh === "function") { await Dm.refresh(); window.dispatchEvent(new Event("mt-data-refresh")); }
+        ctx.toast("บันทึกผลซ่อมแล้ว · ระบบตัดสต็อกอะไหล่อัตโนมัติ", "mail");
+        ctx.go("m_queue");
+      } catch (err) {
+        console.error("[repair-save] error", err);
+        ctx.toast("บันทึกไม่สำเร็จ", "error");
+      } finally { setSaving(false); }
+    } else {
+      ctx.toast("บันทึกผลซ่อมแล้ว · ระบบตัดสต็อกอะไหล่อัตโนมัติ", "mail");
+      ctx.go("m_queue");
+    }
+  };
+
   return (
     <div>
       <div className="card card-pad" style={{ marginBottom: 14, background: "var(--surface-2)" }}>
@@ -425,8 +510,8 @@ function RepairForm({ ctx }) {
         <label>หมวดปัญหา</label>
         <select className="select" value={cat} onChange={(e) => setCat(e.target.value)}>{cats.map((c) => <option key={c}>{c}</option>)}</select>
       </div>
-      <div className="field"><label>สาเหตุราก (Root Cause)</label><textarea className="textarea" style={{ minHeight: 70 }} placeholder="เช่น O-ring seal degraded causing pressure drop" /></div>
-      <div className="field"><label>วิธีแก้ไข (Corrective Action)</label><textarea className="textarea" style={{ minHeight: 70 }} placeholder="อธิบายการซ่อมที่ทำ" /></div>
+      <div className="field"><label>สาเหตุราก (Root Cause) <span className="req">*</span></label><textarea className="textarea" style={{ minHeight: 70 }} value={rootInput} onChange={(e) => setRootInput(e.target.value)} placeholder="เช่น O-ring seal degraded causing pressure drop" /></div>
+      <div className="field"><label>วิธีแก้ไข (Corrective Action) <span className="req">*</span></label><textarea className="textarea" style={{ minHeight: 70 }} value={actionInput} onChange={(e) => setActionInput(e.target.value)} placeholder="อธิบายการซ่อมที่ทำ" /></div>
 
       <div className="field">
         <label>ประเภทสาเหตุ</label>
@@ -434,8 +519,8 @@ function RepairForm({ ctx }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 }}>
-        <div className="field"><label>เวลาเริ่ม</label><input className="input" type="time" defaultValue="13:15" /></div>
-        <div className="field"><label>เวลาเสร็จ</label><input className="input" type="time" defaultValue="15:30" /></div>
+        <div className="field"><label>เวลาเริ่ม</label><input className="input" type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></div>
+        <div className="field"><label>เวลาเสร็จ</label><input className="input" type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} /></div>
       </div>
 
       <div className="panel" style={{ marginBottom: 14 }}>
@@ -470,16 +555,68 @@ function RepairForm({ ctx }) {
         <div className="small" style={{ color: "var(--amber-ink)" }}>การบันทึกจะตัดสต็อกอะไหล่ออกจากคลังโดยอัตโนมัติ และส่งให้หัวหน้างานตรวจรับ</div>
       </div>
 
-      <button className="btn btn-success btn-lg btn-block" onClick={save}><Icon name="check" size={18} /> บันทึกผลการซ่อม</button>
+      <button className="btn btn-success btn-lg btn-block" onClick={save} disabled={saving}>
+        <Icon name="check" size={18} /> {saving ? "กำลังบันทึก..." : "บันทึกผลการซ่อม"}
+      </button>
     </div>);
 
 }
 
-/* ---------------- Mobile request list (operator: my requests) ---------------- */
+/* ---------------- Mobile request list (operator: my requests / technician: all requests) ---------------- */
 function MobileRequests({ ctx }) {
   const [f, setF] = useState("all");
+  const [deletingNo, setDeletingNo] = useState(null);
+  const [completingNo, setCompletingNo] = useState(null);
   const filters = [["all", "ทั้งหมด"], ["Waiting", "รอ"], ["In Progress", "กำลังซ่อม"], ["Completed", "เสร็จ"]];
   const list = Dm.requests.filter((r) => f === "all" || r.status === f);
+  const isTech = ctx.role === "Technician";
+
+  const removeRequest = async (e, requestNo) => {
+    e.stopPropagation();
+    if (deletingNo) return;
+    if (!window.DATA || typeof window.DATA.deleteRequest !== "function") {
+      ctx.toast("Delete API is not ready", "error");
+      return;
+    }
+    if (!window.confirm("Delete request " + requestNo + "?")) return;
+    setDeletingNo(requestNo);
+    try {
+      await window.DATA.deleteRequest(requestNo);
+      if (typeof Dm.refresh === "function") await Dm.refresh();
+      window.dispatchEvent(new Event("mt-data-refresh"));
+      ctx.toast("ลบใบแจ้ง " + requestNo + " แล้ว", "check");
+    } catch (error) {
+      console.error("[request-delete] API error", error);
+      ctx.toast("ลบไม่สำเร็จ", "error");
+    } finally {
+      setDeletingNo(null);
+    }
+  };
+
+  const completeRequest = async (e, requestNo) => {
+    e.stopPropagation();
+    if (completingNo) return;
+    if (!window.DATA || typeof window.DATA.completeRequest !== "function") {
+      const req = Dm.requests.find((r) => r.no === requestNo);
+      if (req) { req.status = "Completed"; req.finish = new Date().toISOString(); }
+      window.dispatchEvent(new Event("mt-data-refresh"));
+      ctx.toast("ปิดงาน " + requestNo + " เสร็จสิ้น", "check");
+      return;
+    }
+    setCompletingNo(requestNo);
+    try {
+      await window.DATA.completeRequest(requestNo);
+      if (typeof Dm.refresh === "function") await Dm.refresh();
+      window.dispatchEvent(new Event("mt-data-refresh"));
+      ctx.toast("ปิดงาน " + requestNo + " เสร็จสิ้น", "check");
+    } catch (error) {
+      console.error("[request-complete] API error", error);
+      ctx.toast("ปิดงานไม่สำเร็จ", "error");
+    } finally {
+      setCompletingNo(null);
+    }
+  };
+
   return (
     <div>
       <div className="row wrap gap-sm" style={{ marginBottom: 14 }}>
@@ -489,11 +626,25 @@ function MobileRequests({ ctx }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(420px,1fr))", gap: 12 }}>
         {list.map((r) =>
-        <button key={r.no} className="card card-pad" style={{ textAlign: "left", cursor: "pointer" }} onClick={() => ctx.go("m_detail", { reqNo: r.no })}>
-            <div className="row between"><span className="mono small" style={{ fontWeight: 600 }}>{r.no}</span><JobBadge status={r.status} /></div>
+        <div key={r.no} className="card card-pad" style={{ textAlign: "left", cursor: "pointer" }} onClick={() => ctx.go("m_detail", { reqNo: r.no })}>
+            <div className="row between" style={{ gap: 8 }}>
+              <span className="mono small" style={{ fontWeight: 600 }}>{r.no}</span>
+              <div className="row gap-sm" onClick={(e) => e.stopPropagation()}>
+                <JobBadge status={r.status} />
+                {isTech && r.status === "In Progress" && (
+                  <button type="button" className="btn btn-success btn-sm" style={{ padding: "6px 12px", minHeight: 0 }}
+                    disabled={completingNo === r.no} onClick={(e) => completeRequest(e, r.no)}>
+                    {completingNo === r.no ? "กำลังปิด..." : "เสร็จสิ้น"}
+                  </button>
+                )}
+                <button type="button" className="btn" style={{ padding: "6px 10px", minHeight: 0 }} disabled={deletingNo === r.no} onClick={(e) => removeRequest(e, r.no)}>
+                  {deletingNo === r.no ? "กำลังลบ..." : "ลบ"}
+                </button>
+              </div>
+            </div>
             <div className="small" style={{ margin: "7px 0" }}><span className="mono" style={{ fontWeight: 600 }}>{r.mc}</span> · {r.problem}</div>
             <div className="row between"><PriorityTag p={r.priority} /><span className="tiny muted-2 mono">{r.date}</span></div>
-          </button>
+          </div>
         )}
       </div>
     </div>);
@@ -502,7 +653,12 @@ function MobileRequests({ ctx }) {
 
 /* ---------------- Mobile request detail (compact) ---------------- */
 function MobileDetail({ ctx }) {
-  const r = Dm.requests.find((x) => x.no === ctx.params.reqNo) || Dm.requests[0];
+  const r = Dm.requests.find((x) => x.no === ctx.params.reqNo) || null;
+  if (!r) return (
+    <div className="card card-pad" style={{ textAlign: "center", padding: 40 }}>
+      <div className="h-sm">ไม่พบใบแจ้งซ่อม</div>
+    </div>
+  );
   const rep = Dm.repairs[r.no];
   const use = Dm.usage[r.no] || [];
   const total = use.reduce((s, u) => s + u.unit * u.qty, 0);
@@ -555,7 +711,7 @@ function buildTimeline(r, rep) {
   { title: "แจ้งซ่อม", desc: r.reporter, time: r.date, state: "done" }];
 
   const accepted = r.status !== "Waiting";
-  steps.push({ title: "รับงาน", desc: rep ? rep.tech : "—", time: accepted ? r.start : "", state: accepted ? "done" : "" });
+  steps.push({ title: "รับงาน", desc: r.acceptedBy || (rep ? rep.tech : "—"), time: accepted ? (r.acceptedAt || r.start) : "", state: accepted ? "done" : "" });
   const repairing = r.status === "In Progress";
   const repaired = r.status === "Completed";
   steps.push({ title: "ซ่อม", desc: rep ? rep.action : "", time: r.finish || "", state: repaired ? "done" : repairing ? "active" : "" });

@@ -1,0 +1,14 @@
+# dependencies
+backend/node_modules/
+
+# environment / secrets — copy .env.example and fill in real values locally
+backend/.env
+.env
+
+# codex / AI scratch scripts
+backend/.codex-*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
