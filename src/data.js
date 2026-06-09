@@ -182,9 +182,9 @@
   DATA.users = [
     { id:"U-001", name:"Somchai K.",   user:"somchai",  role:"Operator",     dept:"Production Line 1", status:"Active" },
     { id:"U-002", name:"Wichai S.",    user:"wichai",   role:"Operator",     dept:"Production Line 2", status:"Active" },
-    { id:"U-003", name:"Somsak R.",    user:"somsak",   role:"Technician",   dept:"Maintenance",       status:"Active" },
-    { id:"U-004", name:"Nattawut P.",  user:"nattawut", role:"Technician",   dept:"Maintenance",       status:"Active" },
-    { id:"U-005", name:"Prasert W.",   user:"prasert",  role:"Supervisor",   dept:"Maintenance",       status:"Active" },
+    { id:"U-003", name:"Somsak R.",    user:"somsak",   role:"Maintenance",  dept:"Maintenance",       status:"Active" },
+    { id:"U-004", name:"Nattawut P.",  user:"nattawut", role:"Maintenance",  dept:"Maintenance",       status:"Active" },
+    { id:"U-005", name:"Prasert W.",   user:"prasert",  role:"Maintenance",  dept:"Maintenance",       status:"Active" },
     { id:"U-006", name:"Wanida T.",    user:"wanida",   role:"Store Keeper", dept:"Warehouse",         status:"Active" },
     { id:"U-007", name:"Direk M.",     user:"direk",    role:"Manager",      dept:"Plant Management",  status:"Active" },
     { id:"U-008", name:"Admin",        user:"admin",    role:"Admin",        dept:"IT / System",       status:"Active" },
@@ -193,9 +193,8 @@
   /* identity per role for the topbar */
   DATA.roleUser = {
     "Operator":    { name:"Somchai K.",  short:"SK" },
-    "Technician":  { name:"Somsak R.",   short:"SR" },
-    "Supervisor":  { name:"Prasert W.",  short:"PW" },
-    "Production":   { name:"Kanya P.",    short:"KP" },
+    "Maintenance": { name:"Somsak R.",   short:"SR" },
+    "Production":  { name:"Kanya P.",    short:"KP" },
     "Store Keeper":{ name:"Wanida T.",   short:"WT" },
     "Manager":     { name:"Direk M.",    short:"DM" },
     "Admin":       { name:"Admin",       short:"AD" },
@@ -203,8 +202,9 @@
 
   DATA.roleLabelTH = {
     "Operator":"พนักงานหน้างาน",
+    "Maintenance":"ช่างซ่อมบำรุง / ฝ่าย MT",
     "Technician":"ช่างซ่อมบำรุง",
-    "Supervisor":"หัวหน้างาน MT",
+    "Supervisor":"ช่างซ่อมบำรุง / ฝ่าย MT",
     "Production":"ฝ่ายผลิต",
     "Store Keeper":"เจ้าหน้าที่คลัง",
     "Manager":"ผู้บริหาร",

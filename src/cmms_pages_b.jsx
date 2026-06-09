@@ -8,10 +8,8 @@ function cmTimeline(r, rep){
   const out=[{ title:"แจ้งซ่อม", desc:r.reporter, time:r.date, state:"done" }];
   const accepted=r.status!=="Waiting";
   out.push({ title:"ช่างรับงาน", desc:rep?rep.tech:"—", time:accepted?r.start:"", state:accepted?"done":"" });
-  const repairing=r.status==="In Progress", repaired=r.status==="Completed";
-  out.push({ title:"ดำเนินการซ่อม", desc:rep?rep.action:"", time:r.finish||"", state:repaired?"done":(repairing?"active":"") });
-  const approved=rep&&rep.verify==="Approved";
-  out.push({ title:"ตรวจรับ & ปิดงาน", desc:approved?("โดย "+rep.by):"รอหัวหน้าตรวจรับ", time:"", state:approved?"done":"" });
+  const repairing=r.status==="In Progress", repaired=r.status==="Completed"||r.status==="Resubmitted";
+  out.push({ title:"ดำเนินการซ่อม & ปิดงาน", desc:rep?rep.action:"", time:r.finish||"", state:repaired?"done":(repairing?"active":"") });
   return out;
 }
 
@@ -22,7 +20,7 @@ window.CPAGES.requests = function Requests({ nav }){
   const [pri,setPri]=useState("all");
   const [sel,setSel]=useState(null);
   const [creating,setCreating]=useState(false);
-  const canCreate=["Operator","Supervisor","Admin"].includes(nav.role);
+  const canCreate=["Operator","Maintenance","Admin"].includes(nav.role);
 
   if(sel) return <RequestDetail no={sel} onBack={()=>setSel(null)} nav={nav}/>;
   if(creating) return <RequestCreate onBack={()=>setCreating(false)} nav={nav}/>;
@@ -39,7 +37,7 @@ window.CPAGES.requests = function Requests({ nav }){
         <StatCard icon="list" tone="navy" value={B.requests.length} label="ใบแจ้งทั้งหมด"/>
         <StatCard icon="clock" tone="blue" value={B.requests.filter(r=>r.status==="In Progress").length} label="กำลังดำเนินการ"/>
         <StatCard icon="alert" tone="red" value={B.requests.filter(r=>r.priority==="Critical").length} label="วิกฤต (Critical)"/>
-        <StatCard icon="checkCircle" tone="green" value={B.requests.filter(r=>r.status==="Completed").length} label="ปิดงานแล้ว"/>
+        <StatCard icon="checkCircle" tone="green" value={B.requests.filter(r=>r.status==="Completed"||r.status==="Resubmitted").length} label="ปิดงานแล้ว"/>
       </div>
 
       <div className="panel">
@@ -113,7 +111,6 @@ function RequestDetail({ no, onBack, nav }){
                 <div style={{gridColumn:"1 / -1"}}><div className="tiny muted-2">สาเหตุราก (Root Cause)</div><div className="small" style={{fontWeight:600}}>{rep.root}</div></div>
                 <div style={{gridColumn:"1 / -1"}}><div className="tiny muted-2">วิธีแก้ไข</div><div className="small" style={{fontWeight:600}}>{rep.action}</div></div>
                 <div><div className="tiny muted-2">เวลาซ่อมรวม</div><div className="small mono" style={{fontWeight:600}}>{rep.hrs} ชม.</div></div>
-                <div><div className="tiny muted-2">การตรวจรับ</div><div><JobBadge status={rep.verify}/></div></div>
               </div>
             </div>
           )}
@@ -136,13 +133,6 @@ function RequestDetail({ no, onBack, nav }){
             <div className="panel-head"><div className="h-sm">สถานะการดำเนินงาน</div></div>
             <div className="panel-body"><Timeline steps={cmTimeline(r,rep)}/></div>
           </div>
-          {nav.role==="Supervisor" && r.status==="Completed" && rep && rep.verify!=="Approved" && (
-            <div className="panel"><div className="panel-body stack">
-              <div className="h-sm">ตรวจรับงาน</div>
-              <textarea className="textarea" placeholder="หมายเหตุ / เหตุผล"></textarea>
-              <div className="row gap-sm"><button className="btn btn-success grow" onClick={()=>nav.toast("อนุมัติงาน "+r.no,"check")}><Icon name="check" size={16}/> อนุมัติ</button><button className="btn btn-danger grow" onClick={()=>nav.toast("ส่งกลับแก้ไข","error")}><Icon name="x" size={16}/> ไม่อนุมัติ</button></div>
-            </div></div>
-          )}
         </div>
       </div>
     </>
@@ -153,8 +143,30 @@ function RequestCreate({ onBack, nav }){
   const [mc,setMc]=useState("MC-001");
   const [sev,setSev]=useState("High");
   const [desc,setDesc]=useState("");
+  const [submitting,setSubmitting]=useState(false);
   const sevs=["Low","Medium","High","Critical"];
   const m=B.machineByCode(mc);
+
+  const submit = async () => {
+    if(submitting) return;
+    if(!desc.trim()){nav.toast("กรุณากรอกอาการเสีย","error");return;}
+    if(typeof window.DATA?.createRequest==="function"){
+      setSubmitting(true);
+      try{
+        const reqNo = await window.DATA.createRequest({machineCode:mc, problem:desc.trim(), priority:sev, reporterName:B.roleUser[nav.role]?.name||null});
+        if(typeof B.refresh==="function"){await B.refresh();window.dispatchEvent(new Event("mt-data-refresh"));}
+        nav.toast("ส่งใบแจ้งซ่อมแล้ว · "+reqNo+" · Telegram แจ้งทีมช่างแล้ว","mail");
+        onBack();
+      }catch(err){
+        console.error("[RequestCreate] submit error",err);
+        nav.toast("ส่งไม่สำเร็จ: "+err.message,"error");
+      }finally{setSubmitting(false);}
+    } else {
+      nav.toast("ส่งใบแจ้งซ่อมแล้ว · ระบบแจ้ง Telegram ทีมช่าง","mail");
+      onBack();
+    }
+  };
+
   return (
     <>
       <button className="btn btn-ghost" style={{marginBottom:14}} onClick={onBack}><Icon name="chevL" size={16}/> ยกเลิก</button>
@@ -173,8 +185,8 @@ function RequestCreate({ onBack, nav }){
               <div className="field"><label>ผู้แจ้ง</label><input className="input" defaultValue={B.roleUser[nav.role].name}/></div>
               <div className="field"><label>แผนก</label><input className="input" defaultValue={m.dept}/></div>
             </div>
-            <button className="btn btn-primary btn-lg btn-block" onClick={()=>{ if(!desc.trim()){nav.toast("กรุณากรอกอาการเสีย","error");return;} nav.toast("ส่งใบแจ้งซ่อมแล้ว · ระบบแจ้ง Telegram ทีมช่าง","mail"); onBack(); }}>
-              <Icon name="check" size={18}/> ส่งใบแจ้งซ่อม
+            <button className="btn btn-primary btn-lg btn-block" onClick={submit} disabled={submitting}>
+              <Icon name="check" size={18}/> {submitting?"กำลังส่ง...":"ส่งใบแจ้งซ่อม"}
             </button>
           </div>
         </div>
@@ -201,8 +213,8 @@ function RequestCreate({ onBack, nav }){
 const WO_PRI={ Critical:0, High:1, Medium:2, Low:3 };
 window.CPAGES.workorders = function WorkOrders({ nav }){
   const [tab,setTab]=useState("queue");
-  const open=B.requests.filter(r=>r.status!=="Completed").sort((a,b)=>WO_PRI[a.priority]-WO_PRI[b.priority]);
-  const done=B.requests.filter(r=>r.status==="Completed");
+  const open=B.requests.filter(r=>r.status!=="Completed"&&r.status!=="Resubmitted").sort((a,b)=>WO_PRI[a.priority]-WO_PRI[b.priority]);
+  const done=B.requests.filter(r=>r.status==="Completed"||r.status==="Resubmitted");
   const [sel,setSel]=useState(null);
   if(sel) return <RequestDetail no={sel} onBack={()=>setSel(null)} nav={nav}/>;
   const list=tab==="queue"?open:done;
@@ -213,7 +225,7 @@ window.CPAGES.workorders = function WorkOrders({ nav }){
         <button className={"tab"+(tab==="done"?" on":"")} onClick={()=>setTab("done")}><Icon name="checkCircle" size={16}/> ปิดงานแล้ว ({done.length})</button>
       </div>
       <div className="grid-3">
-        {list.map(r=>{ const m=B.machineByCode(r.mc); const hot=r.priority==="Critical"||(m&&m.rank==="A"&&r.status!=="Completed");
+        {list.map(r=>{ const m=B.machineByCode(r.mc); const hot=r.priority==="Critical"||(m&&m.rank==="A"&&r.status!=="Completed"&&r.status!=="Resubmitted");
           return (
             <div key={r.no} className="card" style={{overflow:"hidden",borderColor:hot?"var(--red)":"var(--border)",borderWidth:hot?1.5:1}}>
               {hot && <div style={{background:"var(--red)",color:"#fff",padding:"5px 14px",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",gap:6}}><Icon name="alert" size={12}/> งานสำคัญ — ทำก่อน</div>}
@@ -223,7 +235,7 @@ window.CPAGES.workorders = function WorkOrders({ nav }){
                 <div className="small muted" style={{minHeight:38,marginBottom:11}}>{r.problem}</div>
                 <div className="row between">
                   <JobBadge status={r.status}/>
-                  <button className="btn btn-sm btn-primary" onClick={()=>setSel(r.no)}>{r.status==="Waiting"?"รับงาน":r.status==="Completed"?"ดูงาน":"บันทึกผล"} <Icon name="chevR" size={14}/></button>
+                  <button className="btn btn-sm btn-primary" onClick={()=>setSel(r.no)}>{r.status==="Waiting"?"รับงาน":(r.status==="Completed"||r.status==="Resubmitted")?"ดูงาน":"บันทึกผล"} <Icon name="chevR" size={14}/></button>
                 </div>
               </div>
             </div>
@@ -235,13 +247,93 @@ window.CPAGES.workorders = function WorkOrders({ nav }){
   );
 };
 
+/* ---------------- PM Detail Modal ---------------- */
+function PMDetail({ pm, onClose }){
+  const m = B.machineByCode(pm.mc);
+  const PM_BADGE={ "Completed":"b-green","Overdue":"b-red","Due Later":"b-blue" };
+  const statusLabel={ "Completed":"เสร็จตามแผน","Overdue":"เกินกำหนด","Due Later":"ยังไม่ถึงกำหนด" };
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={onClose}>
+      <div style={{background:"var(--surface)",borderRadius:16,width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,.18)",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+        <div className="panel-head" style={{padding:"16px 20px"}}>
+          <div>
+            <div className="h-sm">รายละเอียดแผน PM</div>
+            <div className="tiny muted-2" style={{marginTop:3}}>{pm.mc} · {pm.name}</div>
+          </div>
+          <button className="icon-btn" onClick={onClose}><Icon name="x" size={18}/></button>
+        </div>
+        <div style={{padding:"18px 20px",display:"grid",gap:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div className="panel" style={{margin:0}}>
+              <div style={{padding:"12px 14px"}}>
+                <div className="tiny muted-2">เครื่องจักร</div>
+                <div className="small mono" style={{fontWeight:700,marginTop:3}}>{pm.mc}</div>
+                <div className="tiny muted-2" style={{marginTop:2}}>{pm.name}</div>
+              </div>
+            </div>
+            <div className="panel" style={{margin:0}}>
+              <div style={{padding:"12px 14px"}}>
+                <div className="tiny muted-2">สถานะ</div>
+                <div style={{marginTop:5}}><span className={"badge "+PM_BADGE[pm.status]}><span className="dot"></span>{statusLabel[pm.status]||pm.status}</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="panel" style={{margin:0}}>
+            <div style={{padding:"12px 14px"}}>
+              <div className="tiny muted-2" style={{marginBottom:6}}>Checklist / รายการตรวจสอบ</div>
+              <div className="small" style={{fontWeight:600,lineHeight:1.6}}>{pm.checklist}</div>
+            </div>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+            <div className="panel" style={{margin:0}}>
+              <div style={{padding:"12px 14px"}}>
+                <div className="tiny muted-2">ความถี่</div>
+                <div style={{marginTop:5}}><span className="chip">{pm.freq}</span></div>
+              </div>
+            </div>
+            <div className="panel" style={{margin:0}}>
+              <div style={{padding:"12px 14px"}}>
+                <div className="tiny muted-2">PM ล่าสุด</div>
+                <div className="small mono" style={{fontWeight:600,marginTop:4}}>{pm.last||"—"}</div>
+              </div>
+            </div>
+            <div className="panel" style={{margin:0,borderColor:pm.status==="Overdue"?"var(--red)":"var(--border)"}}>
+              <div style={{padding:"12px 14px"}}>
+                <div className="tiny muted-2">ครั้งถัดไป</div>
+                <div className="small mono" style={{fontWeight:700,marginTop:4,color:pm.status==="Overdue"?"var(--red-ink)":"inherit"}}>{pm.next||"—"}</div>
+              </div>
+            </div>
+          </div>
+
+          {m && (
+            <div className="panel" style={{margin:0}}>
+              <div style={{padding:"12px 14px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+                <div><div className="tiny muted-2">กลุ่มเครื่อง</div><div className="small" style={{fontWeight:600,marginTop:3}}>{m.group}</div></div>
+                <div><div className="tiny muted-2">Criticality</div><div className="small" style={{fontWeight:600,marginTop:3}}>{m.crit}</div></div>
+                <div><div className="tiny muted-2">Rank</div><div style={{marginTop:3}}><RankPill rank={m.rank}/></div></div>
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{padding:"12px 20px",borderTop:"1px solid var(--border)",display:"flex",justifyContent:"flex-end"}}>
+          <button className="btn btn-ghost" onClick={onClose}>ปิด</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- PM Schedule ---------------- */
 window.CPAGES.pm = function PM({ nav }){
   const [view,setView]=useState("list");
+  const [sel,setSel]=useState(null);
   const PM_BADGE={ "Completed":"b-green","Overdue":"b-red","Due Later":"b-blue" };
   const overdue=B.pm.filter(p=>p.status==="Overdue").length;
   return (
     <>
+      {sel && <PMDetail pm={sel} onClose={()=>setSel(null)}/>}
       <div className="grid-auto" style={{marginBottom:18}}>
         <StatCard icon="cal" tone="navy" value={B.pm.length} label="แผน PM ทั้งหมด"/>
         <StatCard icon="checkCircle" tone="green" value={B.pm.filter(p=>p.status==="Completed").length} label="เสร็จตามแผน"/>
@@ -253,7 +345,7 @@ window.CPAGES.pm = function PM({ nav }){
           <button className={view==="list"?"on":""} onClick={()=>setView("list")}>ตาราง</button>
           <button className={view==="cal"?"on":""} onClick={()=>setView("cal")}>ปฏิทิน</button>
         </div>
-        {["Supervisor","Admin"].includes(nav.role) && <button className="btn btn-primary" onClick={()=>nav.toast("เพิ่มแผน PM (prototype)","check")}><Icon name="plus" size={16}/> เพิ่มแผน PM</button>}
+        {["Maintenance","Admin"].includes(nav.role) && <button className="btn btn-primary" onClick={()=>nav.toast("เพิ่มแผน PM (prototype)","check")}><Icon name="plus" size={16}/> เพิ่มแผน PM</button>}
       </div>
 
       {view==="list" ? (
@@ -261,24 +353,24 @@ window.CPAGES.pm = function PM({ nav }){
           <div className="table-wrap"><table className="tbl">
             <thead><tr><th>เครื่อง</th><th>Checklist</th><th>ความถี่</th><th>PM ล่าสุด</th><th>ครั้งถัดไป</th><th>สถานะ</th><th></th></tr></thead>
             <tbody>{B.pm.map((p,i)=>(
-              <tr key={i} className={p.status==="Overdue"?"row-red":""}>
+              <tr key={i} className={p.status==="Overdue"?"row-red":""} style={{cursor:"pointer"}} onClick={()=>setSel(p)}>
                 <td><span className="mono small" style={{fontWeight:600}}>{p.mc}</span><div className="tiny muted-2">{p.name}</div></td>
                 <td className="small">{p.checklist}</td>
                 <td><span className="chip">{p.freq}</span></td>
                 <td className="mono small muted">{p.last}</td>
                 <td className="mono small" style={{fontWeight:600}}>{p.next}</td>
                 <td><span className={"badge "+PM_BADGE[p.status]}><span className="dot"></span>{p.status}</span></td>
-                <td><button className="btn btn-sm" onClick={()=>nav.toast("เปิด Checklist "+p.mc,"check")}>Checklist</button></td>
+                <td><Icon name="chevR" size={16} style={{color:"var(--ink-3)"}}/></td>
               </tr>
             ))}</tbody>
           </table></div>
         </div>
-      ) : <PMCalendar/>}
+      ) : <PMCalendar onSelect={setSel}/>}
     </>
   );
 };
 
-function PMCalendar(){
+function PMCalendar({ onSelect }){
   // June 2026 — 1 June = Monday(index1). build 5 weeks grid
   const dow=["จ","อ","พ","พฤ","ศ","ส","อา"];
   const evMap={}; B.pm.forEach(p=>{ const d=p.next; if(d&&d.startsWith("2026-06")){ const day=+d.split("-")[2]; (evMap[day]=evMap[day]||[]).push(p); } });
@@ -300,7 +392,7 @@ function PMCalendar(){
             <div key={i} className={"cal-cell"+(!d?" dim":"")+(d===today?" today":"")}>
               {d && <><div className="cal-date">{d}</div>
                 {(evMap[d]||[]).map((p,j)=>(
-                  <div key={j} className="cal-ev" style={{background:p.status==="Overdue"?"var(--red-bg)":"var(--green-bg)",color:p.status==="Overdue"?"var(--red-ink)":"var(--green-ink)"}} title={p.name+" · "+p.checklist}>{p.mc} PM</div>
+                  <div key={j} className="cal-ev" style={{background:p.status==="Overdue"?"var(--red-bg)":"var(--green-bg)",color:p.status==="Overdue"?"var(--red-ink)":"var(--green-ink)",cursor:"pointer"}} title={p.name+" · "+p.checklist} onClick={()=>onSelect&&onSelect(p)}>{p.mc} PM</div>
                 ))}</>}
             </div>
           ))}

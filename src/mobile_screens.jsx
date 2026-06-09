@@ -13,8 +13,6 @@ function mBuildTimeline(r, rep){
   out.push({ title:"รับงาน", desc: rep?rep.tech:"—", time: accepted?r.start:"", state: accepted?"done":"" });
   const repairing=r.status==="In Progress", repaired=r.status==="Completed";
   out.push({ title:"ซ่อม", desc: rep?rep.action:"", time:r.finish||"", state: repaired?"done":(repairing?"active":"") });
-  const approved=rep&&rep.verify==="Approved";
-  out.push({ title:"ตรวจรับ", desc: approved?("โดย "+rep.by):"รอหัวหน้าตรวจรับ", time:"", state: approved?"done":"" });
   return out;
 }
 
@@ -384,7 +382,7 @@ window.MSCREENS.repair = function Repair({ nav }){
     <div style={{textAlign:"center",padding:"6px 4px 8px"}}>
       <div className="m-success"><Icon name="check" size={38}/></div>
       <div style={{fontFamily:"var(--display)",fontSize:20,fontWeight:600}}>บันทึกผลซ่อมแล้ว</div>
-      <div className="small muted" style={{margin:"8px 0 4px"}}>ระบบตัดสต็อกอะไหล่อัตโนมัติ และส่งให้หัวหน้างานตรวจรับ</div>
+      <div className="small muted" style={{margin:"8px 0 4px"}}>ระบบตัดสต็อกอะไหล่อัตโนมัติ และปิดงานทันที</div>
       {total>0 && <div className="m-card m-card-pad" style={{margin:"14px 0",background:"var(--surface-2)"}}><div className="row between"><span className="small muted">ต้นทุนอะไหล่</span><span className="mono" style={{fontWeight:700,fontSize:17}}>฿{MS.fmtNum(total)}</span></div></div>}
       <button className="m-btn m-btn-primary" onClick={()=>{ close(); nav.tab("queue"); }}>กลับไปคิวงาน</button>
     </div>
@@ -418,7 +416,7 @@ window.MSCREENS.repair = function Repair({ nav }){
         </div>
         <div className="row between" style={{padding:"13px 15px",borderTop:"1px solid var(--border)",background:"var(--surface-2)"}}><span className="small muted">ต้นทุนอะไหล่รวม</span><span className="mono" style={{fontWeight:700,fontSize:17}}>฿{MS.fmtNum(total)}</span></div>
       </div>
-      <MInfoNote kind="warn" icon="alert">การบันทึกจะตัดสต็อกอะไหล่อัตโนมัติ และส่งให้หัวหน้างานตรวจรับ</MInfoNote>
+      <MInfoNote kind="warn" icon="alert">การบันทึกจะตัดสต็อกอะไหล่ออกจากคลังโดยอัตโนมัติ และปิดงานทันที</MInfoNote>
       <button className="m-btn m-btn-success m-btn-lg" onClick={save}><Icon name="check" size={19}/> บันทึกผลการซ่อม</button>
     </>
   );

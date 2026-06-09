@@ -15,9 +15,10 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 // ---------- mappers: SQL rows -> prototype (window.DATA) shape ----------
 const rankFromScore = (s) => (s >= 9 ? "Critical" : s >= 6 ? "Medium" : "Low");
+const scoreFromRank = (r) => (r === "Critical" ? 9 : r === "Medium" ? 6 : 3);
 
 async function buildData() {
-  const [machines, parts, requests, repairs, usage, pm, users, moves] = await Promise.all([
+  const [machines, parts, requests, repairs, usage, pm, users, moves, suppliers, pos, poItems, reviewHistory] = await Promise.all([
     q(`SELECT m.code, m.name, g.name AS grp, m.\`rank\` AS \`rank\`, d.name AS dept,
               m.location AS zone, m.maker, m.model, m.install_date AS install,
               m.criticality AS crit, m.status
@@ -34,7 +35,8 @@ async function buildData() {
     q(`SELECT r.request_no, r.problem_description, r.priority, r.status,
               r.accepted_by_name, r.accepted_at,
               r.breakdown_start, r.finish_repair, r.downtime_hours,
-              m.code AS mc, m.name AS mcName, d.name AS dept, u.full_name AS reporter
+              m.code AS mc, m.name AS mcName, d.name AS dept, u.full_name AS reporter,
+              r.prod_decision, r.prod_reason, r.review_round
        FROM maintenance_requests r
        JOIN machines m ON m.id = r.machine_id
        LEFT JOIN departments d ON d.id = r.department_id
@@ -56,13 +58,30 @@ async function buildData() {
     q(`SELECT m.code AS mc, m.name, pm.checklist, pm.frequency,
               pm.last_pm_date, pm.next_pm_date, pm.completed
        FROM pm_schedules pm JOIN machines m ON m.id = pm.machine_id`),
-    q(`SELECT full_name, email, role, is_active FROM app_users ORDER BY full_name`),
+    q(`SELECT id, full_name, email, role, phone, telegram_chat_id, is_active FROM app_users ORDER BY full_name`),
     q(`SELECT sm.type, sm.qty, sm.moved_at, sm.note, sp.code, sp.name
        FROM stock_movements sm JOIN spare_parts sp ON sp.id = sm.part_id
        ORDER BY sm.moved_at DESC`),
+    q(`SELECT id, name, lead_time_days FROM suppliers ORDER BY name`),
+    q(`SELECT po.po_no, po.expected_date, po.note, po.total_cost, po.created_at,
+              s.name AS supplier, COUNT(poi.id) AS item_count
+       FROM purchase_orders po
+       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       LEFT JOIN purchase_order_items poi ON poi.po_id = po.id
+       GROUP BY po.id
+       ORDER BY po.created_at DESC`),
+    q(`SELECT po.po_no, sp.code, sp.name, poi.qty, poi.unit_cost
+       FROM purchase_order_items poi
+       JOIN purchase_orders po ON po.id = poi.po_id
+       JOIN spare_parts sp ON sp.id = poi.part_id`),
+    q(`SELECT mr.request_no, pr.round, pr.decision, pr.reason, pr.decided_at
+       FROM prod_reviews pr
+       JOIN maintenance_requests mr ON mr.id = pr.request_id
+       ORDER BY mr.request_no, pr.round`),
   ]);
 
-  const roleRev = { operator:"Operator", technician:"Technician", supervisor:"Supervisor",
+  const roleRev = { operator:"Operator", maintenance:"Maintenance",
+    technician:"Maintenance", supervisor:"Maintenance",
     store:"Store Keeper", manager:"Manager", admin:"Admin" };
 
   const D = {};
@@ -86,6 +105,8 @@ async function buildData() {
     dept:r.dept || "", status:r.status, start:r.breakdown_start,
     finish:r.finish_repair || "", downtime:r.downtime_hours,
     acceptedBy:r.accepted_by_name || "", acceptedAt:r.accepted_at || "",
+    prodDecision:r.prod_decision || null, prodReason:r.prod_reason || "",
+    reviewRound:r.review_round || 0,
   }));
   D.repairs = {};
   repairs.forEach((ra) => {
@@ -108,8 +129,10 @@ async function buildData() {
     status:p.completed ? "Completed" : (p.next_pm_date && p.next_pm_date < today() ? "Overdue" : "Due Later"),
   }));
   D.users = users.map((u, i) => ({
-    id:"U-" + String(i + 1).padStart(3, "0"), name:u.full_name,
-    user:(u.email || "").split("@")[0], role:roleRev[u.role] || "Operator",
+    id:"U-" + String(i + 1).padStart(3, "0"), db_id:u.id, name:u.full_name,
+    user:(u.email || "").split("@")[0], email:u.email || "",
+    role:roleRev[u.role] || "Operator", dbRole:u.role,
+    phone:u.phone || "", telegramId:u.telegram_chat_id || "",
     dept:"", status:u.is_active ? "Active" : "Inactive",
   }));
   D.stockIn = moves.filter((m) => m.type === "IN").map((m) => ({
@@ -119,6 +142,24 @@ async function buildData() {
     date:(m.moved_at || "").slice(0, 10), doc:m.note || "", code:m.code, name:m.name,
     qty:m.qty, by:"", mc:"", reason:m.note || "",
   }));
+  D.suppliers = suppliers.map((s) => ({ name:s.name, leadTime:s.lead_time_days || 0 }));
+  D.purchaseOrders = pos.map((p) => ({
+    no:p.po_no, supplier:p.supplier || "—", date:(p.created_at || "").slice(0, 10),
+    expected:(p.expected_date || "").slice(0, 10), items:p.item_count,
+    total:Number(p.total_cost), note:p.note || "",
+  }));
+  D.poItems = {};
+  poItems.forEach((x) => {
+    (D.poItems[x.po_no] = D.poItems[x.po_no] || []).push({
+      code:x.code, name:x.name, qty:x.qty, unit:Number(x.unit_cost),
+    });
+  });
+  D.reviewHistory = {};
+  reviewHistory.forEach((h) => {
+    (D.reviewHistory[h.request_no] = D.reviewHistory[h.request_no] || []).push({
+      round:h.round, decision:h.decision, reason:h.reason || "", decidedAt:h.decided_at,
+    });
+  });
   return D;
 }
 
@@ -196,6 +237,66 @@ app.post("/api/requests", async (req, res) => {
   }
 });
 
+// ---------- WRITE: แก้ไขอะไหล่ ----------
+app.put("/api/parts/:code", async (req, res) => {
+  const { code } = req.params;
+  const { name, group, partRank, max = 0, min = 0, safety = 0, rop = 0, price = 0 } = req.body || {};
+  if (!name || !group) return res.status(400).json({ error: "name และ group จำเป็นต้องระบุ" });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[sp]] = await conn.query(`SELECT id FROM spare_parts WHERE code = ?`, [code]);
+    if (!sp) { await conn.rollback(); return res.status(404).json({ error: "ไม่พบอะไหล่: " + code }); }
+    const [[grp]] = await conn.query(`SELECT id FROM mc_groups WHERE name = ?`, [group]);
+    if (!grp) { await conn.rollback(); return res.status(400).json({ error: "ไม่พบกลุ่ม: " + group }); }
+    await conn.query(
+      `UPDATE spare_parts SET name=?, mc_group_id=?, min_stock=?, max_stock=?, safety_stock=?, rop=?, unit_cost=?, criticality_score=? WHERE code=?`,
+      [name, grp.id, Number(min)||0, Number(max)||0, Number(safety)||0, Number(rop)||0, Number(price)||0, scoreFromRank(partRank), code]
+    );
+    await conn.commit();
+    res.json({ ok: true, code });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally {
+    conn.release();
+  }
+});
+
+app.post("/api/parts", async (req, res) => {
+  const { code, name, group, partRank, max = 0, min = 0, safety = 0, rop = 0, price = 0 } = req.body || {};
+  if (!code || !name || !group) {
+    return res.status(400).json({ error: "code, name, group are required" });
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[grp]] = await conn.query(`SELECT id FROM mc_groups WHERE name = ?`, [group]);
+    if (!grp) {
+      await conn.rollback();
+      return res.status(400).json({ error: "ไม่พบกลุ่มเครื่องจักร: " + group });
+    }
+    const id = crypto.randomUUID();
+    await conn.query(
+      `INSERT INTO spare_parts (id, code, name, mc_group_id, min_stock, max_stock, safety_stock, rop, current_stock, criticality_score, unit_cost)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+      [id, code, name, grp.id, min, max, safety, rop, scoreFromRank(partRank), price]
+    );
+    await conn.commit();
+    res.json({ ok: true, code });
+  } catch (e) {
+    await conn.rollback();
+    if (e.code === "ER_DUP_ENTRY") {
+      return res.status(400).json({ error: "รหัสอะไหล่นี้มีอยู่แล้ว: " + code });
+    }
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally {
+    conn.release();
+  }
+});
+
 app.post("/api/requests/:requestNo/complete", async (req, res) => {
   const requestNo = req.params.requestNo;
   const conn = await pool.getConnection();
@@ -251,13 +352,22 @@ app.post("/api/repairs", async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[r]] = await conn.query(`SELECT id FROM maintenance_requests WHERE request_no = ?`, [requestNo]);
+    const [[r]] = await conn.query(`SELECT id, status FROM maintenance_requests WHERE request_no = ?`, [requestNo]);
     if (!r) { await conn.rollback(); return res.status(400).json({ error: "request not found" }); }
-    await conn.query(
-      `INSERT INTO repair_actions (request_id, root_cause, corrective_action, repair_hours, verification_status)
-       VALUES (?, ?, ?, ?, ?)`,
-      [r.id, repair.root || null, repair.action || null, repair.hrs ?? null, repair.verify || "Pending"]
-    );
+    const newStatus = r.status === "Returned" ? "Resubmitted" : "Completed";
+    const [[existing]] = await conn.query(`SELECT id FROM repair_actions WHERE request_id = ? LIMIT 1`, [r.id]);
+    if (existing) {
+      await conn.query(
+        `UPDATE repair_actions SET root_cause=?, corrective_action=?, repair_hours=?, verification_status=? WHERE id=?`,
+        [repair.root || null, repair.action || null, repair.hrs ?? null, repair.verify || "Approved", existing.id]
+      );
+    } else {
+      await conn.query(
+        `INSERT INTO repair_actions (request_id, root_cause, corrective_action, repair_hours, verification_status)
+         VALUES (?, ?, ?, ?, ?)`,
+        [r.id, repair.root || null, repair.action || null, repair.hrs ?? null, repair.verify || "Approved"]
+      );
+    }
     for (const p of parts) {
       const [[sp]] = await conn.query(`SELECT id, unit_cost FROM spare_parts WHERE code = ?`, [p.code]);
       if (!sp) continue;
@@ -267,12 +377,280 @@ app.post("/api/repairs", async (req, res) => {
       );
     }
     await conn.query(
-      `UPDATE maintenance_requests SET status = 'Completed', finish_repair = NOW() WHERE id = ?`, [r.id]
+      `UPDATE maintenance_requests SET status=?, finish_repair=NOW(), prod_decision=NULL, prod_reason=NULL, review_round=review_round+1 WHERE id=?`, [newStatus, r.id]
     );
     await conn.commit();
     res.json({ ok: true });
   } catch (e) {
     await conn.rollback(); console.error(e); res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// ---------- WRITE: PD อนุมัติ/ไม่อนุมัติ ----------
+app.put("/api/requests/:no/prodapprove", async (req, res) => {
+  const { no } = req.params;
+  const { decision, reason = "" } = req.body || {};
+  if (!["Approved", "Rejected"].includes(decision))
+    return res.status(400).json({ error: "decision must be Approved or Rejected" });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[r]] = await conn.query(
+      `SELECT id, review_round FROM maintenance_requests WHERE request_no = ?`, [no]
+    );
+    if (!r) { await conn.rollback(); return res.status(404).json({ error: "ไม่พบใบแจ้งซ่อม" }); }
+    await conn.query(
+      `INSERT INTO prod_reviews (request_id, round, decision, reason) VALUES (?, ?, ?, ?)`,
+      [r.id, r.review_round, decision, reason || null]
+    );
+    const newStatus = decision === "Rejected" ? "Returned" : "Completed";
+    await conn.query(
+      `UPDATE maintenance_requests SET status=?, prod_decision=?, prod_reason=?, prod_decided_at=NOW() WHERE id=?`,
+      [newStatus, decision, reason, r.id]
+    );
+    if (decision === "Rejected" && process.env.TELEGRAM_TEAM_CHAT) {
+      const msg = `❌ <b>PD ส่งงานคืน</b> — ${no}\nเหตุผล: ${reason || "ไม่ระบุ"}\nกรุณาดำเนินการซ่อมและบันทึกผลใหม่อีกครั้ง`;
+      await conn.query(
+        `INSERT INTO notification_log (channel, recipient, subject, message, related_request_id, status)
+         VALUES ('telegram', 'TEAM_CHAT', ?, ?, ?, 'pending')`,
+        [`PD ส่งงานคืน ${no}`, msg, r.id]
+      );
+    }
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (e) {
+    await conn.rollback(); console.error(e); res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// ---------- WRITE: รับเข้า/เบิกออกอะไหล่ (DB ตัดสต็อกเอง) ----------
+app.post("/api/stock-movements", async (req, res) => {
+  const { code, type, qty, by, reason, mc, date } = req.body || {};
+  const qtyNum = Number(qty);
+  if (!code || (type !== "IN" && type !== "OUT") || !qtyNum || qtyNum <= 0) {
+    return res.status(400).json({ error: "code, type (IN/OUT), qty (มากกว่า 0) จำเป็นต้องระบุ" });
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[sp]] = await conn.query(
+      `SELECT id, current_stock, unit_cost FROM spare_parts WHERE code = ?`, [code]
+    );
+    if (!sp) {
+      await conn.rollback();
+      return res.status(400).json({ error: "ไม่พบอะไหล่: " + code });
+    }
+    if (type === "OUT" && sp.current_stock < qtyNum) {
+      await conn.rollback();
+      return res.status(400).json({ error: `คงคลังไม่พอ (มี ${sp.current_stock} ต้องการเบิก ${qtyNum})` });
+    }
+
+    let movedBy = null;
+    if (by) {
+      const [u] = await conn.query(
+        `SELECT id
+         FROM app_users
+         WHERE full_name COLLATE utf8mb4_0900_ai_ci =
+               CAST(? AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_0900_ai_ci
+         LIMIT 1`,
+        [by]
+      );
+      movedBy = u[0] ? u[0].id : null;
+    }
+
+    const note = (type === "OUT" && mc)
+      ? [reason, "เครื่อง/ใบแจ้ง: " + mc].filter(Boolean).join(" · ")
+      : (reason || null);
+
+    await conn.query(
+      `INSERT INTO stock_movements (part_id, type, qty, unit_cost, note, moved_by, moved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [sp.id, type, qtyNum, sp.unit_cost, note, movedBy, date || new Date()]
+    );
+    const newStock = type === "IN" ? sp.current_stock + qtyNum : sp.current_stock - qtyNum;
+    await conn.query(`UPDATE spare_parts SET current_stock = ? WHERE id = ?`, [newStock, sp.id]);
+
+    await conn.commit();
+    res.json({ ok: true, code, cur: newStock });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally {
+    conn.release();
+  }
+});
+
+// ---------- WRITE: สร้างใบสั่งซื้อ (PO) ----------
+app.post("/api/purchase-orders", async (req, res) => {
+  const { supplier, expectedDate, note, items = [] } = req.body || {};
+  const cleanItems = (Array.isArray(items) ? items : [])
+    .map((it) => ({ code: it.code, qty: Number(it.qty) }))
+    .filter((it) => it.code && it.qty > 0);
+  if (!supplier || cleanItems.length === 0) {
+    return res.status(400).json({ error: "ผู้ขายและรายการอะไหล่อย่างน้อย 1 รายการ จำเป็นต้องระบุ" });
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[sup]] = await conn.query(`SELECT id FROM suppliers WHERE name = ?`, [supplier]);
+    if (!sup) { await conn.rollback(); return res.status(400).json({ error: "ไม่พบผู้ขาย: " + supplier }); }
+
+    const parts = [];
+    for (const it of cleanItems) {
+      const [[sp]] = await conn.query(`SELECT id, unit_cost FROM spare_parts WHERE code = ?`, [it.code]);
+      if (!sp) { await conn.rollback(); return res.status(400).json({ error: "ไม่พบอะไหล่: " + it.code }); }
+      parts.push({ id: sp.id, qty: it.qty, unitCost: Number(sp.unit_cost) });
+    }
+    const totalCost = parts.reduce((s, p) => s + p.qty * p.unitCost, 0);
+
+    const id = crypto.randomUUID();
+    const year = new Date().getFullYear();
+    const counterKey = `PO-${year}`;
+    await conn.query(
+      `INSERT INTO seq_counters (cname, val)
+       VALUES (?, 1)
+       ON DUPLICATE KEY UPDATE val = val + 1`,
+      [counterKey]
+    );
+    const [[seqRow]] = await conn.query(`SELECT val AS seq FROM seq_counters WHERE cname = ?`, [counterKey]);
+    const poNo = `PO-${year}-${String(seqRow.seq).padStart(3, "0")}`;
+
+    await conn.query(
+      `INSERT INTO purchase_orders (id, po_no, supplier_id, expected_date, note, total_cost)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, poNo, sup.id, expectedDate || null, note || null, totalCost]
+    );
+    for (const p of parts) {
+      await conn.query(
+        `INSERT INTO purchase_order_items (po_id, part_id, qty, unit_cost) VALUES (?, ?, ?, ?)`,
+        [id, p.id, p.qty, p.unitCost]
+      );
+    }
+    await conn.commit();
+    res.json({ ok: true, po_no: poNo, total: totalCost });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally {
+    conn.release();
+  }
+});
+
+// ---------- WRITE: แก้ไขเครื่องจักร ----------
+app.put("/api/machines/:code", async (req, res) => {
+  const { code } = req.params;
+  const { name, group, rank, criticality, dept, location, maker, model, installDate, status } = req.body || {};
+  if (!name || !group) return res.status(400).json({ error: "name และ group จำเป็นต้องระบุ" });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[mc]] = await conn.query(`SELECT id FROM machines WHERE code = ?`, [code]);
+    if (!mc) { await conn.rollback(); return res.status(404).json({ error: "ไม่พบเครื่อง: " + code }); }
+    const [[grp]] = await conn.query(`SELECT id FROM mc_groups WHERE name = ?`, [group]);
+    if (!grp) { await conn.rollback(); return res.status(400).json({ error: "ไม่พบกลุ่มเครื่องจักร: " + group }); }
+    let deptId = null;
+    if (dept) {
+      const [[d]] = await conn.query(`SELECT id FROM departments WHERE name = ?`, [dept]);
+      deptId = d ? d.id : null;
+    }
+    await conn.query(
+      `UPDATE machines SET name=?, mc_group_id=?, \`rank\`=?, criticality=?, department_id=?, location=?, maker=?, model=?, install_date=?, status=? WHERE code=?`,
+      [name, grp.id, rank || "C", criticality || "LOW", deptId, location || null, maker || null, model || null, installDate || null, status || "Running", code]
+    );
+    await conn.commit();
+    res.json({ ok: true, code });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally {
+    conn.release();
+  }
+});
+
+// ---------- WRITE: เพิ่มเครื่องจักรใหม่ ----------
+app.post("/api/machines", async (req, res) => {
+  const { code, name, group, rank = "C", criticality = "LOW", dept, location, maker, model, installDate, status = "Running" } = req.body || {};
+  if (!code || !name || !group) {
+    return res.status(400).json({ error: "code, name, group จำเป็นต้องระบุ" });
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[grp]] = await conn.query(`SELECT id FROM mc_groups WHERE name = ?`, [group]);
+    if (!grp) { await conn.rollback(); return res.status(400).json({ error: "ไม่พบกลุ่มเครื่องจักร: " + group }); }
+    let deptId = null;
+    if (dept) {
+      const [[d]] = await conn.query(`SELECT id FROM departments WHERE name = ?`, [dept]);
+      deptId = d ? d.id : null;
+    }
+    const id = crypto.randomUUID();
+    await conn.query(
+      `INSERT INTO machines (id, code, name, mc_group_id, \`rank\`, criticality, department_id, location, maker, model, install_date, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, code, name, grp.id, rank, criticality, deptId, location || null, maker || null, model || null, installDate || null, status]
+    );
+    await conn.commit();
+    res.json({ ok: true, code });
+  } catch (e) {
+    await conn.rollback();
+    if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "รหัสเครื่องนี้มีอยู่แล้ว: " + code });
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally {
+    conn.release();
+  }
+});
+
+// ---------- WRITE: เพิ่มผู้ใช้งาน ----------
+app.post("/api/users", async (req, res) => {
+  const { fullName, role = "operator", email, phone, telegramId } = req.body || {};
+  if (!fullName) return res.status(400).json({ error: "fullName จำเป็นต้องระบุ" });
+  const validRoles = ["operator","maintenance","technician","supervisor","manager","planner","store","purchasing","admin"];
+  if (!validRoles.includes(role)) return res.status(400).json({ error: "role ไม่ถูกต้อง" });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const id = crypto.randomUUID();
+    await conn.query(
+      `INSERT INTO app_users (id, full_name, role, email, phone, telegram_chat_id, is_active) VALUES (?,?,?,?,?,?,1)`,
+      [id, fullName, role, email || null, phone || null, telegramId || null]
+    );
+    await conn.commit();
+    res.json({ ok: true, id });
+  } catch (e) {
+    await conn.rollback();
+    if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "อีเมลนี้มีในระบบแล้ว" });
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// ---------- WRITE: แก้ไขผู้ใช้งาน ----------
+app.put("/api/users/:id", async (req, res) => {
+  const { id } = req.params;
+  const { fullName, role, email, phone, telegramId, isActive } = req.body || {};
+  if (!fullName) return res.status(400).json({ error: "fullName จำเป็นต้องระบุ" });
+  const validRoles = ["operator","maintenance","technician","supervisor","manager","planner","store","purchasing","admin"];
+  if (role && !validRoles.includes(role)) return res.status(400).json({ error: "role ไม่ถูกต้อง" });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[u]] = await conn.query(`SELECT id FROM app_users WHERE id = ?`, [id]);
+    if (!u) { await conn.rollback(); return res.status(404).json({ error: "ไม่พบผู้ใช้" }); }
+    await conn.query(
+      `UPDATE app_users SET full_name=?, role=?, email=?, phone=?, telegram_chat_id=?, is_active=? WHERE id=?`,
+      [fullName, role || "operator", email || null, phone || null, telegramId || null, isActive !== false ? 1 : 0, id]
+    );
+    await conn.commit();
+    res.json({ ok: true, id });
+  } catch (e) {
+    await conn.rollback();
+    if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "อีเมลนี้มีในระบบแล้ว" });
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
   } finally { conn.release(); }
 });
 

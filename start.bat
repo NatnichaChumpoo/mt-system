@@ -69,8 +69,8 @@ if not exist "backend\.env" (
     echo   1. Open backend\.env in a text editor
     echo   2. Set DB_PASSWORD to your MySQL root password
     echo   3. Make sure MySQL 8 is running with the schema loaded:
-    echo        mysql -u root -p ^< mysql\schema_mysql.sql
-    echo        mysql -u root -p car_mt ^< mysql\seed_mysql.sql
+    echo        mysql --default-character-set=utf8mb4 -u root -p ^< mysql\schema_mysql.sql
+    echo        mysql --default-character-set=utf8mb4 -u root -p car_mt ^< mysql\seed_mysql.sql
     echo   4. Run this script again.
     echo.
     start notepad "backend\.env"
@@ -79,7 +79,7 @@ if not exist "backend\.env" (
 
 :: ── install npm packages if node_modules is missing ─────────────────────────
 if not exist "backend\node_modules" (
-    echo  [1/3] Installing npm packages...
+    echo  [1/4] Installing npm packages...
     pushd backend
     call npm install --silent
     if errorlevel 1 (
@@ -91,16 +91,20 @@ if not exist "backend\node_modules" (
 )
 
 :: ── start backend in a new window ───────────────────────────────────────────
-echo  [2/3] Starting backend on http://localhost:3001 ...
+echo  [2/4] Starting backend on http://localhost:3001 ...
 start "MT-Backend (keep open)" cmd /k "cd /d %~dp0backend && node server.js"
 
 :: give the server 3 seconds to boot before opening the browser
 timeout /t 3 /nobreak >nul
 
+:: ── start telegram worker in a new window ───────────────────────────────────
+echo  [3/4] Starting Telegram worker ...
+start "MT-Telegram-Worker (keep open)" cmd /k "cd /d %~dp0backend && npm run worker"
+
 :: ── start frontend and open browser ─────────────────────────────────────────
-echo  [3/3] Starting frontend on http://localhost:8000 ...
+echo  [4/4] Starting frontend on http://localhost:8000 ...
 echo  Opening MT System (API).html in browser...
-echo  Close the backend window to stop everything.
+echo  Close the backend and Telegram worker windows to stop everything.
 echo.
 start "" "http://localhost:8000/MT%%20System%%20%%28API%%29.html"
 python -m http.server 8000

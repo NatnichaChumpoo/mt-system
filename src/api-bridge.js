@@ -18,6 +18,27 @@
   DATA.requestsForMachine = (code) => DATA.requests.filter((r) => r.mc === code);
   DATA.scannedMachine = "MC-001";
 
+  /* ---------- production approval decisions (DB-backed) ---------- */
+  DATA.prodFor = (no) => { const r = DATA.requests.find(x => x.no === no); return r?.prodDecision ? { decision: r.prodDecision, reason: r.prodReason || "" } : null; };
+  DATA.getReviewHistory = (no) => (DATA.reviewHistory || {})[no] || [];
+  DATA.prodGet = () => { const m = {}; DATA.requests.forEach(r => { if (r.prodDecision) m[r.no] = { decision: r.prodDecision, reason: r.prodReason || "" }; }); return m; };
+  DATA.prodSet = () => {}; // legacy no-op — use prodApprove instead
+  DATA.prodApprove = async (no, decision, reason = "") => {
+    const res = await fetch(API + "/api/requests/" + encodeURIComponent(no) + "/prodapprove", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, reason }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "บันทึกไม่สำเร็จ");
+    return j;
+  };
+  DATA.prodStatus = (no) => {
+    const d = DATA.prodFor(no);
+    if (!d)                        return { decision: "Pending",  cls: "b-amber", icon: null,    th: "รออนุมัติจากฝ่ายผลิต",   en: "Pending Production Review", dot: "var(--amber)" };
+    if (d.decision === "Approved") return { decision: "Approved", cls: "b-green", icon: "check", th: "อนุมัติโดยฝ่ายผลิต",     en: "Approved by Production",   dot: "var(--green)", reason: d.reason };
+    return                                { decision: "Rejected", cls: "b-red",   icon: "x",     th: "ไม่อนุมัติโดยฝ่ายผลิต",  en: "Rejected by Production",   dot: "var(--red)",   reason: d.reason };
+  };
+
   /* ---------- static / presentational ---------- */
   DATA.kpi = [
     { key:"MTBF", name:"MTBF", full:"Mean Time Between Failures", value:"420", unit:"ชม.", target:"เพิ่มขึ้น 20%", state:"good", delta:"+18%", trend:"up", note:"Total Running Hrs / Breakdowns" },
@@ -55,16 +76,27 @@
     { name:"Relay", code:"PT-27", count:2 }, { name:"Belt", code:"PT-65", count:1 },
   ];
   DATA.downtimeTrend = [
-    { m:"ธ.ค.", v:7.2 }, { m:"ม.ค.", v:6.1 }, { m:"ก.พ.", v:5.4 },
-    { m:"มี.ค.", v:4.8 }, { m:"เม.ย.", v:3.6 }, { m:"พ.ค.", v:2.75 },
+    { m:"ธ.ค.", date:"2025-12-01", v:7.2 }, { m:"ม.ค.", date:"2026-01-01", v:6.1 }, { m:"ก.พ.", date:"2026-02-01", v:5.4 },
+    { m:"มี.ค.", date:"2026-03-01", v:4.8 }, { m:"เม.ย.", date:"2026-04-01", v:3.6 }, { m:"พ.ค.", date:"2026-05-01", v:2.75 },
   ];
+  const THAI_MONTHS = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+  DATA.fmtThaiDate = (d) => `${d.getDate()} ${THAI_MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  DATA.dateRangeLabel = (entries) => {
+    if (!entries || !entries.length) return "";
+    const start = new Date(entries[0].date);
+    const lastM = new Date(entries[entries.length - 1].date);
+    const end = new Date(lastM.getFullYear(), lastM.getMonth() + 1, 0);
+    return `${DATA.fmtThaiDate(start)} – ${DATA.fmtThaiDate(end)}`;
+  };
   DATA.roleUser = {
-    Operator:{ name:"Somchai K.", short:"SK" }, Technician:{ name:"Somsak R.", short:"SR" },
-    Supervisor:{ name:"Prasert W.", short:"PW" }, "Store Keeper":{ name:"Wanida T.", short:"WT" },
+    Operator:{ name:"Somchai K.", short:"SK" }, Maintenance:{ name:"Somsak R.", short:"SR" },
+    Technician:{ name:"Somsak R.", short:"SR" }, Supervisor:{ name:"Prasert W.", short:"PW" },
+    "Store Keeper":{ name:"Wanida T.", short:"WT" },
     Manager:{ name:"Direk M.", short:"DM" }, Admin:{ name:"Admin", short:"AD" },
   };
   DATA.roleLabelTH = {
-    Operator:"พนักงานหน้างาน", Technician:"ช่างซ่อมบำรุง", Supervisor:"หัวหน้างาน MT",
+    Operator:"พนักงานหน้างาน", Maintenance:"ช่างซ่อมบำรุง / ฝ่าย MT",
+    Technician:"ช่างซ่อมบำรุง", Supervisor:"ช่างซ่อมบำรุง / ฝ่าย MT",
     "Store Keeper":"เจ้าหน้าที่คลัง", Manager:"ผู้บริหาร", Admin:"ผู้ดูแลระบบ",
   };
 
@@ -76,6 +108,7 @@
     Object.assign(DATA, {
       machines:d.machines, parts:d.parts, requests:d.requests, repairs:d.repairs,
       usage:d.usage, pm:d.pm, users:d.users, stockIn:d.stockIn, stockOut:d.stockOut,
+      suppliers:d.suppliers, purchaseOrders:d.purchaseOrders, poItems:d.poItems,
     });
   }
 
@@ -88,6 +121,78 @@
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || "create failed");
     return j.request_no;
+  };
+  DATA.createUser = async ({ fullName, role, email, phone, telegramId }) => {
+    const res = await fetch(API + "/api/users", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fullName, role, email, phone, telegramId }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "เพิ่มผู้ใช้ไม่สำเร็จ");
+    return j;
+  };
+  DATA.updateUser = async ({ db_id, fullName, role, email, phone, telegramId, isActive }) => {
+    const res = await fetch(API + "/api/users/" + encodeURIComponent(db_id), {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fullName, role, email, phone, telegramId, isActive }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "แก้ไขผู้ใช้ไม่สำเร็จ");
+    return j;
+  };
+  DATA.updateMachine = async ({ code, name, group, rank, criticality, dept, location, maker, model, installDate, status }) => {
+    const res = await fetch(API + "/api/machines/" + encodeURIComponent(code), {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, group, rank, criticality, dept, location, maker, model, installDate, status }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "แก้ไขเครื่องจักรไม่สำเร็จ");
+    return j;
+  };
+  DATA.createMachine = async ({ code, name, group, rank, criticality, dept, location, maker, model, installDate, status }) => {
+    const res = await fetch(API + "/api/machines", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, name, group, rank, criticality, dept, location, maker, model, installDate, status }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "เพิ่มเครื่องจักรไม่สำเร็จ");
+    return j;
+  };
+  DATA.updatePart = async ({ code, name, group, partRank, max, min, safety, rop, price }) => {
+    const res = await fetch(API + "/api/parts/" + encodeURIComponent(code), {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, group, partRank, max, min, safety, rop, price }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "แก้ไขอะไหล่ไม่สำเร็จ");
+    return j;
+  };
+  DATA.createPart = async ({ code, name, group, partRank, max, min, safety, rop, price }) => {
+    const res = await fetch(API + "/api/parts", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, name, group, partRank, max, min, safety, rop, price }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "create part failed");
+    return j;
+  };
+  DATA.recordStockMove = async ({ code, type, qty, by, reason, mc, date }) => {
+    const res = await fetch(API + "/api/stock-movements", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, type, qty, by, reason, mc, date }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "save failed");
+    return j;
+  };
+  DATA.createPO = async ({ supplier, expectedDate, note, items }) => {
+    const res = await fetch(API + "/api/purchase-orders", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ supplier, expectedDate, note, items }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "create PO failed");
+    return j;
   };
   DATA.deleteRequest = async (requestNo) => {
     const res = await fetch(API + "/api/requests/" + encodeURIComponent(requestNo), {

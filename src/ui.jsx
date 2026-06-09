@@ -68,6 +68,8 @@ const JOB_BADGE = {
   "Approved":    { cls:"b-green", label:"อนุมัติแล้ว" },
   "Pending":     { cls:"b-amber", label:"รอตรวจรับ" },
   "Rejected":    { cls:"b-red",   label:"ไม่อนุมัติ" },
+  "Returned":    { cls:"b-red",    label:"ส่งกลับซ่อม" },
+  "Resubmitted": { cls:"b-amber", label:"MT ส่งแก้ไขแล้ว" },
 };
 function JobBadge({ status }) {
   const s = JOB_BADGE[status] || JOB_BADGE["Waiting"];
@@ -161,6 +163,7 @@ function Timeline({ steps }) {
           <span className={"tl-dot " + (s.state||"")}>
             {s.state==="done" && <Icon name="check" size={12} />}
             {s.state==="active" && <span style={{width:7,height:7,borderRadius:"50%",background:"#fff"}}></span>}
+            {s.state==="warn" && <Icon name="x" size={12} />}
           </span>
           <div className="tl-title">{s.title}</div>
           {s.desc && <div className="small muted">{s.desc}</div>}
@@ -189,25 +192,22 @@ function PageHead({ title, sub, actions }) {
   );
 }
 
-/* ---------------- QR placeholder (CSS, not a real code) ---------------- */
-function QRBox({ size = 132, label }) {
+/* ---------------- QR Code (qrcodejs — new QRCode(div, opts)) ---------------- */
+function QRBox({ size = 132, label, value }) {
+  const ref = useRef(null);
+  const text = value || label || "";
+  useEffect(() => {
+    if (!ref.current || !text || !window.QRCode) return;
+    ref.current.innerHTML = "";
+    new window.QRCode(ref.current, {
+      text, width: size, height: size,
+      colorDark: "#1a1a1a", colorLight: "#ffffff",
+      correctLevel: window.QRCode.CorrectLevel.M,
+    });
+  }, [text, size]);
   return (
     <div style={{ display:"inline-flex", flexDirection:"column", alignItems:"center", gap:6 }}>
-      <div style={{
-        width:size, height:size, borderRadius:10, padding:10, background:"#fff",
-        border:"1px solid var(--border-2)",
-        backgroundImage:`
-          linear-gradient(90deg,#232019 0 0),
-          repeating-conic-gradient(#232019 0 25%, #fff 0 50%)`,
-        backgroundSize:`100% 100%`,
-      }}>
-        <div style={{
-          width:"100%", height:"100%", borderRadius:4,
-          background:`repeating-conic-gradient(from 0deg, #232019 0% 25%, #ffffff 0% 50%)`,
-          backgroundSize:`${size/6}px ${size/6}px`,
-          maskImage:`radial-gradient(circle at 18% 18%, #000 9%, transparent 10%)`,
-        }}></div>
-      </div>
+      <div ref={ref} style={{ width:size, height:size, borderRadius:8, overflow:"hidden", border:"1px solid var(--border-2)" }} />
       {label && <div className="mono tiny muted">{label}</div>}
     </div>
   );

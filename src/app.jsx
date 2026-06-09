@@ -22,6 +22,7 @@ const SCREENS = {
   d_pm: { comp: PmSchedule, shell: "desktop" },
   d_master: { comp: MasterData, shell: "desktop" },
   d_reorder: { comp: ReorderList, shell: "desktop" },
+  d_pohistory: { comp: POHistory, shell: "desktop" },
   d_stock: { comp: StockInOut, shell: "desktop" },
   d_dashboard: { comp: Dashboard, shell: "desktop" },
   d_admin: { comp: Admin, shell: "desktop" }
@@ -32,18 +33,16 @@ const NAV = {
   "Operator": { home: "m_machine", menu: [
     ["แจ้งซ่อม", [["m_machine", "เครื่องจักร (QR)", "machine"], ["m_requests", "ใบแจ้งของฉัน", "list"], ["m_history", "ประวัติการแจ้งซ่อมล่าสุด", "clock"]]]]
   },
-  "Technician": { home: "m_queue", menu: [
-    ["งานช่าง", [["m_queue", "คิวงานซ่อม", "wrench"], ["m_requests", "ใบแจ้งทั้งหมด", "list"]]]]
-  },
-  "Supervisor": { home: "d_verify", menu: [
-    ["งานซ่อม", [["d_verify", "ตรวจรับงาน", "checkCircle"], ["d_requests", "ใบแจ้งซ่อม", "list"], ["d_pm", "แผน PM", "cal"]]],
+  "Maintenance": { home: "m_queue", menu: [
+    ["งานซ่อมบำรุง", [["m_queue", "คิวงานซ่อม", "wrench"], ["d_requests", "ใบแจ้งซ่อมทั้งหมด", "list"], ["d_pm", "แผน PM", "cal"]]],
+    ["จัดการข้อมูล", [["d_admin", "จัดการเครื่องจักร", "machine"]]],
     ["ภาพรวม", [["d_dashboard", "Dashboard", "gauge"]]]]
   },
   "Production": { home: "d_prodverify", menu: [
     ["ฝ่ายผลิต", [["d_prodverify", "ตรวจสอบใบแจ้งซ่อม", "checkCircle"], ["d_requests", "ใบแจ้งซ่อมทั้งหมด", "list"]]]]
   },
   "Store Keeper": { home: "d_master", menu: [
-    ["คลังอะไหล่", [["d_master", "Master Data", "box"], ["d_reorder", "รายการสั่งซื้อ", "truck"], ["d_stock", "รับเข้า/เบิกออก", "download"]]]]
+    ["คลังอะไหล่", [["d_master", "Master Data", "box"], ["d_reorder", "รายการสั่งซื้อ", "truck"], ["d_pohistory", "ประวัติใบสั่งซื้อ", "clock"], ["d_stock", "รับเข้า/เบิกออก", "download"]]]]
   },
   "Manager": { home: "d_dashboard", menu: [
     ["ภาพรวมบริหาร", [["d_dashboard", "Dashboard KPI", "gauge"]]]]
@@ -53,7 +52,7 @@ const NAV = {
   }
 };
 
-const ROLES = ["Operator", "Technician", "Supervisor", "Production", "Store Keeper", "Manager", "Admin"];
+const ROLES = ["Operator", "Maintenance", "Production", "Store Keeper", "Manager", "Admin"];
 
 /* responsive: true when viewport is phone/tablet width */
 function useIsMobile(bp) {
@@ -86,6 +85,8 @@ function App() {
   const [params, setParams] = uS({});
   const [role, setRole] = uS("Operator");
   const [stack, setStack] = uS([]);
+  /* อ่าน ?mc= จาก URL เมื่อสแกน QR */
+  const [pendingMC] = uS(() => new URLSearchParams(window.location.search).get("mc") || null);
   const [toast, setToast] = uS(null);
   const [roleMenu, setRoleMenu] = uS(false);
   /* live update: re-render เมื่อ api-bridge แจ้งว่าสถานะเปลี่ยน (คงหน้าจอเดิม) */
@@ -114,11 +115,18 @@ function App() {
   const showToast = (msg, kind) => {setToast({ msg, kind });clearTimeout(window.__tt);window.__tt = setTimeout(() => setToast(null), 3200);};
   const go = (s, p = {}) => {setStack((st) => [...st, { screen, params }]);setScreen(s);setParams(p);document.querySelector("main")?.scrollTo(0, 0);window.scrollTo(0, 0);};
   const back = () => {setStack((st) => {if (st.length === 0) return st;const prev = st[st.length - 1];setScreen(prev.screen);setParams(prev.params);return st.slice(0, -1);});};
-  const login = (r, home) => {setRole(r);setScreen(home);setParams({});setStack([]);};
+  const login = (r, home) => {
+    if (pendingMC && r === "Operator") {
+      setRole(r); setScreen("m_machine"); setParams({ mc: pendingMC }); setStack([]);
+      window.history.replaceState({}, "", window.location.pathname);
+    } else {
+      setRole(r); setScreen(home); setParams({}); setStack([]);
+    }
+  };
   const switchRole = (r) => {setRole(r);setScreen(NAV[r].home);setParams({});setStack([]);setRoleMenu(false);};
   const logout = () => {setScreen("login");setStack([]);setRoleMenu(false);};
 
-  const ctx = { go, back, login, role, params, toast: showToast };
+  const ctx = { go, back, login, role, params, toast: showToast, pendingMC };
   const meta = SCREENS[screen] || SCREENS.login;
   const Comp = meta.comp;
   const user = userOf(role);
@@ -168,7 +176,7 @@ function App() {
       <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, background: "rgba(16,28,40,.42)", zIndex: 55, backdropFilter: "blur(1px)" }}></div>
       }
       {/* sidebar — white premium (drawer on mobile) */}
-      <aside style={isMobile ?
+      <aside className="no-print" style={isMobile ?
       { width: 280, maxWidth: "84vw", flex: "none", background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, bottom: 0, height: "100vh", zIndex: 60, transform: drawer ? "translateX(0)" : "translateX(-102%)", transition: "transform .26s cubic-bezier(.4,0,.2,1)", boxShadow: drawer ? "var(--sh-3)" : "none" } :
       { width: 256, flex: "none", background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh" }}>
         <div style={{ padding: "22px 20px 20px", display: "flex", alignItems: "center", gap: 12, borderBottom: "1px solid var(--border)" }}>
@@ -184,9 +192,8 @@ function App() {
               <div className="eyebrow" style={{ padding: "0 12px 10px", fontSize: 10.5 }}>{section}</div>
               {items.map(([s, l, ic]) => {
               const active = screen === s ||
-              s === "d_verify" && screen === "d_detail" && role === "Supervisor" ||
               s === "d_prodverify" && screen === "d_detail" && role === "Production" ||
-              s === "d_requests" && screen === "d_detail" && role !== "Supervisor" && role !== "Production" ||
+              s === "d_requests" && screen === "d_detail" && role !== "Production" ||
               s === "m_machine" && screen === "m_report" ||
               s === "m_machine" && screen === "m_lowpart" ||
               s === "m_queue" && screen === "m_repair" ||
@@ -199,6 +206,7 @@ function App() {
                   color: active ? "var(--ink)" : "var(--ink-2)", fontWeight: active ? 700 : 500, fontSize: 14 }}>
                     {active && <span style={{ position: "absolute", left: 0, top: 9, bottom: 9, width: 3, borderRadius: 3, background: "var(--accent)" }}></span>}
                     <Icon name={ic} size={18} style={{ color: active ? "var(--accent)" : "var(--ink-3)" }} /> {l}
+                    {s === "d_prodverify" && (() => { const n = (DATA.requests||[]).filter(r => (r.status==="Completed"||r.status==="Resubmitted") && !r.prodDecision).length; return n > 0 ? <span style={{ marginLeft:"auto", background:"var(--red)", color:"#fff", borderRadius:99, fontSize:11, fontWeight:700, padding:"1px 7px", minWidth:20, textAlign:"center" }}>{n}</span> : null; })()}
                   </button>);
 
             })}
@@ -216,12 +224,12 @@ function App() {
 
       {/* main */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
-        <header style={{ height: 64, flex: "none", background: "rgba(255,255,255,.82)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "0 14px" : "0 28px", position: "sticky", top: 0, zIndex: 30 }}>
+        <header className="no-print" style={{ height: 64, flex: "none", background: "rgba(255,255,255,.82)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "0 14px" : "0 28px", position: "sticky", top: 0, zIndex: 30 }}>
           <div className="row gap-sm" style={{ minWidth: 0 }}>
             {isMobile &&
             <button className="icon-btn" onClick={() => setDrawer(true)} aria-label="เมนู"><Icon name="menu" size={20} /></button>
             }
-            <span className="eyebrow" style={{ whiteSpace: "nowrap" }}>{labelOf(role)}</span>
+            <span className="eyebrow" style={{ whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => { setStack([]); setScreen(nav.home); setParams({}); }}>{labelOf(role)}</span>
             {!isMobile && <span style={{ color: "var(--ink-3)" }}>/</span>}
             {!isMobile && <span className="small" style={{ fontWeight: 600 }}>{screenTitle(screen, meta)}</span>}
           </div>
@@ -249,7 +257,7 @@ function App() {
           }
         </main>
       </div>
-      <Toast toast={toast} />{tweaksPanel(t, setTweak)}
+      <div className="no-print"><Toast toast={toast} />{tweaksPanel(t, setTweak)}</div>
     </div>);
 
 }
@@ -269,7 +277,7 @@ function tweaksPanel(t, setTweak) {
 function screenTitle(s, meta) {
   if (meta && meta.field) return meta.title;
   const m = { d_requests: "ใบแจ้งซ่อม", d_detail: "รายละเอียดใบแจ้ง", d_verify: "ตรวจรับงาน", d_prodverify: "ตรวจสอบใบแจ้งซ่อม (ฝ่ายผลิต)", d_pm: "แผน PM",
-    d_master: "คลังอะไหล่ Master Data", d_reorder: "รายการสั่งซื้อ", d_stock: "รับเข้า/เบิกออก",
+    d_master: "คลังอะไหล่ Master Data", d_reorder: "รายการสั่งซื้อ", d_pohistory: "ประวัติใบสั่งซื้อ", d_stock: "รับเข้า/เบิกออก",
     d_dashboard: "Dashboard ผู้บริหาร", d_admin: "ผู้ดูแลระบบ" };
   return m[s] || "";
 }

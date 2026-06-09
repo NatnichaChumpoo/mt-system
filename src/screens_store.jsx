@@ -9,6 +9,7 @@ function MasterData({ ctx }) {
   const [q, setQ] = useState("");
   const [grp, setGrp] = useState("all");
   const [st, setSt] = useState("all");
+  const [adding, setAdding] = useState(false);
   const groups = ["all", ...Array.from(new Set(Ds.parts.map(p=>p.group)))];
   let rows = Ds.parts.filter(p => {
     if (grp!=="all" && p.group!==grp) return false;
@@ -23,11 +24,26 @@ function MasterData({ ctx }) {
     reorder: Ds.parts.filter(p=>p.status==="reorder").length,
     normal: Ds.parts.filter(p=>p.status==="normal").length,
   };
+  const statusLabel = { critical:"วิกฤต (ของหมด)", reorder:"ควรสั่งซื้อ", normal:"ปกติ" };
+  const exportXlsx = () => {
+    if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
+    const data = sorted.map(p => ({
+      "Part Code": p.code, "ชื่ออะไหล่": p.name, "กลุ่ม": p.group, "Part Rank": p.partRank,
+      "Max": p.max, "Min": p.min, "Safety": p.safety, "ROP": p.rop, "คงคลัง": p.cur,
+      "สถานะ": statusLabel[p.status] || p.status, "มูลค่า": p.value, "Lead Time (วัน)": p.leadTime,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Master Data");
+    XLSX.writeFile(wb, "คลังอะไหล่_" + new Date().toISOString().slice(0,10) + ".xlsx");
+    ctx.toast("ส่งออก "+data.length+" รายการแล้ว", "check");
+  };
   return (
     <div>
       <PageHead title="คลังอะไหล่ — Master Data" sub="Spare Part Master · ควบคุมด้วย Min / Max / Safety Stock / ROP" actions={
-        <><button className="btn"><Icon name="download" size={15}/> ส่งออก</button><button className="btn btn-primary"><Icon name="plus" size={15}/> เพิ่มอะไหล่</button></>
+        <><button className="btn" onClick={exportXlsx}><Icon name="download" size={15}/> ส่งออก</button><button className="btn btn-primary" onClick={()=>setAdding(true)}><Icon name="plus" size={15}/> เพิ่มอะไหล่</button></>
       } />
+      {adding && <AddPartModal ctx={ctx} groups={groups.filter(g=>g!=="all")} onClose={()=>setAdding(false)} />}
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", marginBottom:16}}>
         <MiniStat label="รายการทั้งหมด" value={Ds.parts.length} color="var(--navy)" icon="box"/>
         <MiniStat label="วิกฤต (ของหมด)" value={counts.critical} color="var(--red)" icon="alert"/>
@@ -89,9 +105,149 @@ function PartRankTag({ rank }) {
   return <span className={"tag "+(m[rank]||"tag-low")}>{rank}</span>;
 }
 
+function AddPartModal({ ctx, groups, onClose }) {
+  const ranks = ["Critical","Medium","Low"];
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [group, setGroup] = useState(groups[0] || "");
+  const [partRank, setPartRank] = useState("Medium");
+  const [max, setMax] = useState("");
+  const [min, setMin] = useState("");
+  const [safety, setSafety] = useState("");
+  const [rop, setRop] = useState("");
+  const [price, setPrice] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (submitting) return;
+    if (!code.trim() || !name.trim() || !group) { ctx.toast("กรุณากรอกรหัส ชื่อ และกลุ่มอะไหล่", "error"); return; }
+    if (typeof Ds.createPart !== "function") { ctx.toast("ระบบยังไม่รองรับการบันทึกลง DB", "error"); return; }
+    setSubmitting(true);
+    try {
+      await Ds.createPart({
+        code: code.trim(), name: name.trim(), group, partRank,
+        max: Number(max) || 0, min: Number(min) || 0, safety: Number(safety) || 0,
+        rop: Number(rop) || 0, price: Number(price) || 0,
+      });
+      if (typeof Ds.refresh === "function") await Ds.refresh();
+      window.dispatchEvent(new Event("mt-data-refresh"));
+      ctx.toast("เพิ่มอะไหล่ "+code.trim()+" แล้ว", "check");
+      onClose();
+    } catch (err) {
+      ctx.toast("บันทึกไม่สำเร็จ: "+err.message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal title="เพิ่มอะไหล่ใหม่" onClose={onClose} wide>
+      <div className="stack">
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr", gap:14}}>
+          <div className="field"><label>รหัสอะไหล่ (Code) <span className="req">*</span></label>
+            <input className="input" value={code} onChange={e=>setCode(e.target.value)} placeholder="เช่น PT-99"/></div>
+          <div className="field"><label>ชื่ออะไหล่ <span className="req">*</span></label>
+            <input className="input" value={name} onChange={e=>setName(e.target.value)} placeholder="ชื่ออะไหล่"/></div>
+        </div>
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr", gap:14}}>
+          <div className="field"><label>กลุ่มเครื่องจักร <span className="req">*</span></label>
+            <select className="select" value={group} onChange={e=>setGroup(e.target.value)}>
+              {groups.map(g=><option key={g} value={g}>{g}</option>)}
+            </select></div>
+          <div className="field"><label>Part Rank</label>
+            <div className="seg">{ranks.map(r=><div key={r} className={"seg-opt"+(partRank===r?" on-"+r.toLowerCase():"")} onClick={()=>setPartRank(r)}>{r}</div>)}</div></div>
+        </div>
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:14}}>
+          <div className="field"><label>Min</label><input className="input" type="number" value={min} onChange={e=>setMin(e.target.value)} placeholder="0"/></div>
+          <div className="field"><label>Max</label><input className="input" type="number" value={max} onChange={e=>setMax(e.target.value)} placeholder="0"/></div>
+          <div className="field"><label>Safety</label><input className="input" type="number" value={safety} onChange={e=>setSafety(e.target.value)} placeholder="0"/></div>
+          <div className="field"><label>ROP</label><input className="input" type="number" value={rop} onChange={e=>setRop(e.target.value)} placeholder="0"/></div>
+        </div>
+        <div className="field"><label>ราคาต่อหน่วย (บาท)</label>
+          <input className="input" type="number" value={price} onChange={e=>setPrice(e.target.value)} placeholder="0"/></div>
+        <button className="btn btn-primary btn-lg btn-block" onClick={submit} disabled={submitting}>
+          <Icon name="check" size={18}/> {submitting?"กำลังบันทึก...":"บันทึกอะไหล่"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /* ---------------- 5.10 Reorder list ---------------- */
+function CreatePOModal({ ctx, rows, onClose, onDone }) {
+  const [supplier, setSupplier] = useState("");
+  const [expectedDate, setExpectedDate] = useState("");
+  const [note, setNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const total = rows.reduce((s,p)=>s + p.price*p.suggest, 0);
+
+  const submit = async () => {
+    if (submitting) return;
+    if (!supplier) { ctx.toast("กรุณาเลือกผู้ขาย", "error"); return; }
+    if (typeof Ds.createPO !== "function") { ctx.toast("ระบบยังไม่รองรับการบันทึกลง DB", "error"); return; }
+    setSubmitting(true);
+    try {
+      const j = await Ds.createPO({
+        supplier, expectedDate: expectedDate || null, note: note.trim() || null,
+        items: rows.map(p=>({ code:p.code, qty:p.suggest })),
+      });
+      if (typeof Ds.refresh === "function") await Ds.refresh();
+      window.dispatchEvent(new Event("mt-data-refresh"));
+      ctx.toast(`สร้างใบสั่งซื้อ ${j.po_no} แล้ว · มูลค่า ${Ds.fmtMoney(j.total)}`, "check");
+      onDone();
+    } catch (err) {
+      ctx.toast("สร้าง PO ไม่สำเร็จ: "+err.message, "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal title={`สร้างใบสั่งซื้อ (${rows.length} รายการ)`} onClose={onClose} wide>
+      <div className="stack">
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr", gap:14}}>
+          <div className="field"><label>ผู้ขาย <span className="req">*</span></label>
+            <select className="select" value={supplier} onChange={e=>setSupplier(e.target.value)}>
+              <option value="">เลือกผู้ขาย...</option>
+              {(Ds.suppliers||[]).map(s=><option key={s.name} value={s.name}>{s.name} · lead time {s.leadTime}d</option>)}
+            </select></div>
+          <div className="field"><label>วันที่คาดว่าจะได้รับ</label>
+            <input className="input" type="date" value={expectedDate} onChange={e=>setExpectedDate(e.target.value)}/></div>
+        </div>
+        <div className="field"><label>หมายเหตุ</label>
+          <textarea className="textarea" style={{minHeight:60}} value={note} onChange={e=>setNote(e.target.value)} placeholder="เช่น เร่งด่วน / สำหรับเครื่อง MC-xxx"/></div>
+        <div className="panel" style={{margin:0}}>
+          <div className="panel-head"><div className="h-sm">รายการที่จะสั่งซื้อ</div><span className="chip">{rows.length} รายการ</span></div>
+          <div className="table-wrap" style={{maxHeight:260}}>
+            <table className="tbl">
+              <thead><tr><th>Part Code</th><th>ชื่ออะไหล่</th><th className="num">ควรสั่ง</th><th className="num">ราคา/หน่วย</th><th className="num">รวม</th></tr></thead>
+              <tbody>{rows.map(p=>(
+                <tr key={p.code}>
+                  <td className="cell-code">{p.code}</td>
+                  <td className="small">{p.name}</td>
+                  <td className="num mono" style={{fontWeight:700}}>{p.suggest}</td>
+                  <td className="num mono small">{Ds.fmtMoney(p.price)}</td>
+                  <td className="num mono small" style={{fontWeight:700}}>{Ds.fmtMoney(p.price*p.suggest)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+        <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"4px 2px"}}>
+          <span className="small muted">มูลค่ารวมโดยประมาณ</span>
+          <span className="mono" style={{fontWeight:800, fontSize:18, color:"var(--green-ink)"}}>{Ds.fmtMoney(total)}</span>
+        </div>
+        <button className="btn btn-primary btn-lg btn-block" onClick={submit} disabled={submitting}>
+          <Icon name="check" size={18}/> {submitting?"กำลังบันทึก...":"ยืนยันสร้างใบสั่งซื้อ"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function ReorderList({ ctx }) {
   const [sel, setSel] = useState(()=>new Set());
+  const [showCreatePO, setShowCreatePO] = useState(false);
   let rows = Ds.parts.filter(p => p.cur <= p.rop).map(p=>({ ...p, suggest: Math.max(p.rop - p.cur, p.min || 1) }));
   const { sorted, sort, onSort } = useSort(rows, { key:"score", dir:-1 });
   const toggle = code => setSel(s=>{ const n=new Set(s); n.has(code)?n.delete(code):n.add(code); return n; });
@@ -99,12 +255,29 @@ function ReorderList({ ctx }) {
   const toggleAll = ()=> setSel(all? new Set() : new Set(sorted.map(p=>p.code)));
   const selRows = sorted.filter(p=>sel.has(p.code));
   const estCost = selRows.reduce((s,p)=>s + p.price*p.suggest, 0);
+  const exportPO = () => {
+    if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
+    const rowsToExport = selRows.length > 0 ? selRows : sorted;
+    if (rowsToExport.length === 0) { ctx.toast("ไม่มีรายการให้ส่งออก", "error"); return; }
+    const data = rowsToExport.map(p => ({
+      "Part Code": p.code, "ชื่ออะไหล่": p.name, "กลุ่ม": p.group, "แบรนด์": p.brand,
+      "คงคลัง": p.cur, "ROP": p.rop, "ควรสั่ง": p.suggest,
+      "ราคา/หน่วย": p.price, "มูลค่ารวม": p.price * p.suggest, "Lead Time (วัน)": p.leadTime,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "ใบสั่งซื้อ");
+    XLSX.writeFile(wb, "ใบสั่งซื้อ_" + new Date().toISOString().slice(0,10) + ".xlsx");
+    ctx.toast("ส่งออกใบสั่งซื้อ "+data.length+" รายการแล้ว", "check");
+  };
   return (
     <div>
       <PageHead title="รายการต้องสั่งซื้อ (Reorder)" sub={`อะไหล่ที่คงคลัง ≤ ROP · ${rows.length} รายการ`} actions={
-        <><button className="btn"><Icon name="download" size={15}/> ส่งออกใบสั่งซื้อ</button>
-        <button className="btn btn-primary" disabled={sel.size===0} onClick={()=>ctx.toast(`สร้างใบสั่งซื้อ ${sel.size} รายการ มูลค่า ${Ds.fmtMoney(estCost)}`,"mail")}><Icon name="plus" size={15}/> สร้าง PO ({sel.size})</button></>
+        <><button className="btn" onClick={exportPO}><Icon name="download" size={15}/> ส่งออกใบสั่งซื้อ</button>
+        <button className="btn btn-primary" disabled={sel.size===0} onClick={()=>setShowCreatePO(true)}><Icon name="plus" size={15}/> สร้าง PO ({sel.size})</button></>
       } />
+      {showCreatePO && <CreatePOModal ctx={ctx} rows={selRows} onClose={()=>setShowCreatePO(false)}
+        onDone={()=>{ setShowCreatePO(false); setSel(new Set()); }} />}
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", marginBottom:16}}>
         <MiniStat label="ต้องสั่งซื้อ" value={rows.length} color="var(--amber)" icon="truck"/>
         <MiniStat label="ของหมด (วิกฤต)" value={rows.filter(p=>p.status==="critical").length} color="var(--red)" icon="alert"/>
@@ -149,17 +322,115 @@ function ReorderList({ ctx }) {
   );
 }
 
+/* ---------------- 5.10b ประวัติใบสั่งซื้อ ---------------- */
+function PODetailModal({ po, onClose }) {
+  const items = (Ds.poItems && Ds.poItems[po.no]) || [];
+  return (
+    <Modal title={`ใบสั่งซื้อ ${po.no}`} onClose={onClose} wide>
+      <div className="stack">
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr", gap:14}}>
+          <div className="card card-pad" style={{background:"var(--surface-2)"}}>
+            <div className="tiny muted">ผู้ขาย</div>
+            <div style={{fontWeight:700}}>{po.supplier}</div>
+          </div>
+          <div className="card card-pad" style={{background:"var(--surface-2)"}}>
+            <div className="tiny muted">มูลค่ารวม</div>
+            <div className="mono" style={{fontWeight:800, fontSize:18, color:"var(--green-ink)"}}>{Ds.fmtMoney(po.total)}</div>
+          </div>
+        </div>
+        <div className="grid" style={{gridTemplateColumns:"1fr 1fr 1fr", gap:14}}>
+          <div className="field"><label>วันที่สร้าง</label><div className="mono small">{po.date}</div></div>
+          <div className="field"><label>กำหนดรับ</label><div className="mono small">{po.expected || "—"}</div></div>
+          <div className="field"><label>จำนวนรายการ</label><div className="mono small">{po.items} รายการ</div></div>
+        </div>
+        {po.note && <div className="field"><label>หมายเหตุ</label><div className="small">{po.note}</div></div>}
+        <div className="panel" style={{margin:0}}>
+          <div className="panel-head"><div className="h-sm">รายการอะไหล่ในใบสั่งซื้อ</div><span className="chip">{items.length} รายการ</span></div>
+          <div className="table-wrap" style={{maxHeight:300}}>
+            <table className="tbl">
+              <thead><tr><th>Part Code</th><th>ชื่ออะไหล่</th><th className="num">จำนวน</th><th className="num">ราคา/หน่วย</th><th className="num">รวม</th></tr></thead>
+              <tbody>{items.map((it,i)=>(
+                <tr key={i}>
+                  <td className="cell-code">{it.code}</td>
+                  <td className="small">{it.name}</td>
+                  <td className="num mono" style={{fontWeight:700}}>{it.qty}</td>
+                  <td className="num mono small">{Ds.fmtMoney(it.unit)}</td>
+                  <td className="num mono small" style={{fontWeight:700}}>{Ds.fmtMoney(it.unit*it.qty)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+            {items.length === 0 && <div className="small muted" style={{padding:18, textAlign:"center"}}>ไม่พบรายการอะไหล่</div>}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function POHistory({ ctx }) {
+  const pos = Ds.purchaseOrders || [];
+  const [selPO, setSelPO] = useState(null);
+  return (
+    <div>
+      <PageHead title="ประวัติใบสั่งซื้อ" sub={`รายการ PO ที่สร้างไว้ทั้งหมด · ${pos.length} รายการ · คลิกแถวเพื่อดูรายละเอียด`} />
+      <div className="panel">
+        <div className="panel-head"><div className="h-sm">ใบสั่งซื้อทั้งหมด</div><span className="chip">{pos.length} รายการ</span></div>
+        <div className="table-wrap" style={{maxHeight:"70vh"}}>
+          <table className="tbl">
+            <thead><tr><th>เลขที่ PO</th><th>วันที่สร้าง</th><th>ผู้ขาย</th><th className="num">จำนวนรายการ</th><th className="num">มูลค่ารวม</th><th>กำหนดรับ</th><th>หมายเหตุ</th></tr></thead>
+            <tbody>{pos.map((po,i)=>(
+              <tr key={i} style={{cursor:"pointer"}} onClick={()=>setSelPO(po)}>
+                <td className="cell-code">{po.no}</td>
+                <td className="mono small muted">{po.date}</td>
+                <td className="small">{po.supplier}</td>
+                <td className="num mono">{po.items}</td>
+                <td className="num mono" style={{fontWeight:700}}>{Ds.fmtMoney(po.total)}</td>
+                <td className="mono small muted">{po.expected || "—"}</td>
+                <td className="small muted" style={{maxWidth:260}}>{po.note}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {pos.length === 0 && <div className="small muted" style={{padding:24, textAlign:"center"}}>ยังไม่มีใบสั่งซื้อที่สร้างไว้</div>}
+        </div>
+      </div>
+      {selPO && <PODetailModal po={selPO} onClose={()=>setSelPO(null)} />}
+    </div>
+  );
+}
+
 /* ---------------- 5.11 Stock In / Out ---------------- */
 function StockInOut({ ctx }) {
   const [mode, setMode] = useState("in");
   const [code, setCode] = useState("");
   const [qty, setQty] = useState(1);
+  const [by, setBy] = useState("");
+  const [mc, setMc] = useState("");
+  const [reason, setReason] = useState("");
+  const [date, setDate] = useState("2026-05-30");
+  const [submitting, setSubmitting] = useState(false);
   const part = Ds.partByCode(code);
   const log = mode==="in" ? Ds.stockIn : Ds.stockOut;
-  const save = ()=>{
+  const reset = () => { setCode(""); setQty(1); setBy(""); setMc(""); setReason(""); };
+  const save = async ()=>{
+    if (submitting) return;
     if(!code){ ctx.toast("กรุณาเลือกอะไหล่","error"); return; }
-    ctx.toast(mode==="in" ? `รับเข้า ${code} จำนวน ${qty} · อัปเดตยอดคลังแล้ว` : `เบิกออก ${code} จำนวน ${qty} · ตัดสต็อกแล้ว`);
-    setCode(""); setQty(1);
+    if (mode==="out" && part && qty > part.cur) { ctx.toast("คงคลังไม่พอสำหรับการเบิก","error"); return; }
+    if (typeof Ds.recordStockMove !== "function") { ctx.toast("ระบบยังไม่รองรับการบันทึกลง DB","error"); return; }
+    setSubmitting(true);
+    try {
+      await Ds.recordStockMove({
+        code, type: mode==="in" ? "IN" : "OUT", qty,
+        by: by.trim() || null, reason: reason.trim() || null, mc: mc.trim() || null, date,
+      });
+      if (typeof Ds.refresh === "function") await Ds.refresh();
+      window.dispatchEvent(new Event("mt-data-refresh"));
+      ctx.toast(mode==="in" ? `รับเข้า ${code} จำนวน ${qty} · อัปเดตยอดคลังแล้ว` : `เบิกออก ${code} จำนวน ${qty} · ตัดสต็อกแล้ว`, "check");
+      reset();
+    } catch (err) {
+      ctx.toast("บันทึกไม่สำเร็จ: "+err.message, "error");
+    } finally {
+      setSubmitting(false);
+    }
   };
   return (
     <div>
@@ -183,13 +454,13 @@ function StockInOut({ ctx }) {
             </div>}
             <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:11}}>
               <div className="field"><label>จำนวน</label><input className="input" type="number" min="1" value={qty} onChange={e=>setQty(+e.target.value||1)}/></div>
-              <div className="field"><label>วันที่</label><input className="input" type="date" defaultValue="2026-05-30"/></div>
+              <div className="field"><label>วันที่</label><input className="input" type="date" value={date} onChange={e=>setDate(e.target.value)}/></div>
             </div>
-            <div className="field"><label>{mode==="in"?"ผู้รับเข้า":"ผู้เบิก"}</label><input className="input" placeholder={mode==="in"?"เช่น Store_Admin":"เช่น ช่างสมศักดิ์"}/></div>
-            {mode==="out" && <div className="field"><label>เครื่องจักร / ใบแจ้ง</label><input className="input" placeholder="เช่น MC-001 / REQ-2026-001"/></div>}
-            <div className="field"><label>เหตุผล</label><textarea className="textarea" style={{minHeight:64}} placeholder={mode==="in"?"เช่น รับเข้าจากใบสั่งซื้อ PO-2026-014":"เช่น ใช้ในการซ่อม / PM"}/></div>
-            <button className={"btn btn-lg btn-block "+(mode==="in"?"btn-primary":"btn-danger")} onClick={save}>
-              <Icon name={mode==="in"?"download":"truck"} size={17}/> {mode==="in"?"บันทึกรับเข้า":"บันทึกเบิกออก"}
+            <div className="field"><label>{mode==="in"?"ผู้รับเข้า":"ผู้เบิก"}</label><input className="input" value={by} onChange={e=>setBy(e.target.value)} placeholder={mode==="in"?"เช่น Store_Admin":"เช่น ช่างสมศักดิ์"}/></div>
+            {mode==="out" && <div className="field"><label>เครื่องจักร / ใบแจ้ง</label><input className="input" value={mc} onChange={e=>setMc(e.target.value)} placeholder="เช่น MC-001 / REQ-2026-001"/></div>}
+            <div className="field"><label>เหตุผล</label><textarea className="textarea" style={{minHeight:64}} value={reason} onChange={e=>setReason(e.target.value)} placeholder={mode==="in"?"เช่น รับเข้าจากใบสั่งซื้อ PO-2026-014":"เช่น ใช้ในการซ่อม / PM"}/></div>
+            <button className={"btn btn-lg btn-block "+(mode==="in"?"btn-primary":"btn-danger")} onClick={save} disabled={submitting}>
+              <Icon name={mode==="in"?"download":"truck"} size={17}/> {submitting ? "กำลังบันทึก..." : (mode==="in"?"บันทึกรับเข้า":"บันทึกเบิกออก")}
             </button>
           </div>
         </div>
@@ -213,4 +484,4 @@ function StockInOut({ ctx }) {
   );
 }
 
-Object.assign(window, { MasterData, ReorderList, StockInOut, PartRankTag });
+Object.assign(window, { MasterData, ReorderList, StockInOut, POHistory, PartRankTag });

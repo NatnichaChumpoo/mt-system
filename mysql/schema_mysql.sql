@@ -52,7 +52,7 @@ CREATE TABLE app_users (
   id CHAR(36) NOT NULL DEFAULT (UUID()),
   auth_user_id CHAR(36) UNIQUE,
   full_name VARCHAR(128) NOT NULL,
-  role ENUM('operator','technician','supervisor','manager','planner','store','purchasing','admin') NOT NULL DEFAULT 'operator',
+  role ENUM('operator','technician','supervisor','manager','planner','store','purchasing','admin','maintenance') NOT NULL DEFAULT 'operator',
   email VARCHAR(190) UNIQUE,
   telegram_chat_id VARCHAR(64),
   phone VARCHAR(32),
@@ -127,6 +127,30 @@ CREATE TABLE stock_movements (
 CREATE INDEX idx_moves_part ON stock_movements(part_id);
 CREATE INDEX idx_moves_time ON stock_movements(moved_at);
 
+CREATE TABLE purchase_orders (
+  id CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
+  po_no VARCHAR(24) NOT NULL UNIQUE,
+  supplier_id INT,
+  expected_date DATE,
+  note VARCHAR(255),
+  total_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+  created_by CHAR(36),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
+  FOREIGN KEY (created_by) REFERENCES app_users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE purchase_order_items (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  po_id CHAR(36) NOT NULL,
+  part_id CHAR(36) NOT NULL,
+  qty INT NOT NULL,
+  unit_cost DECIMAL(12,2) NOT NULL DEFAULT 0,
+  FOREIGN KEY (po_id) REFERENCES purchase_orders(id),
+  FOREIGN KEY (part_id) REFERENCES spare_parts(id),
+  CHECK (qty > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ============ maintenance request domain ============
 CREATE TABLE maintenance_requests (
   id CHAR(36) NOT NULL DEFAULT (UUID()),
@@ -136,7 +160,8 @@ CREATE TABLE maintenance_requests (
   priority ENUM('Critical','High','Medium','Low') NOT NULL DEFAULT 'Medium',
   reporter_id CHAR(36),
   department_id SMALLINT,
-  status ENUM('New','Waiting','In Progress','Completed','Cancelled') NOT NULL DEFAULT 'New',
+  status ENUM('New','Waiting','In Progress','Completed','Cancelled','Returned','Resubmitted') NOT NULL DEFAULT 'New',
+  review_round INT NOT NULL DEFAULT 0,
   accepted_by_name VARCHAR(190),
   accepted_at DATETIME NULL,
   breakdown_start DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -154,6 +179,16 @@ CREATE TABLE maintenance_requests (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE INDEX idx_req_machine ON maintenance_requests(machine_id);
 CREATE INDEX idx_req_status ON maintenance_requests(status);
+
+CREATE TABLE IF NOT EXISTS prod_reviews (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  request_id CHAR(36) NOT NULL,
+  round INT NOT NULL,
+  decision ENUM('Approved','Rejected') NOT NULL,
+  reason TEXT,
+  decided_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (request_id) REFERENCES maintenance_requests(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE repair_actions (
   id CHAR(36) NOT NULL DEFAULT (UUID()),

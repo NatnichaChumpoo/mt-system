@@ -7,7 +7,8 @@ const Dm = window.DATA;
 
 /* ---------------- 5.1 Login ---------------- */
 function LoginScreen({ ctx }) {
-  const [role, setRole] = useState("Operator");
+  const scannedMC = ctx.pendingMC ? Dm.machineByCode(ctx.pendingMC) : null;
+  const [role, setRole] = useState(ctx.pendingMC ? "Operator" : "Operator");
   const [user, setUser] = useState("");
   const [pw, setPw] = useState("");
   const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth <= 860);
@@ -17,9 +18,9 @@ function LoginScreen({ ctx }) {
     window.addEventListener("resize", on);
     return () => window.removeEventListener("resize", on);
   }, []);
-  const roles = ["Operator", "Technician", "Supervisor", "Production", "Store Keeper", "Manager", "Admin"];
+  const roles = ["Operator", "Maintenance", "Production", "Store Keeper", "Manager", "Admin"];
   const homeFor = {
-    "Operator": "m_machine", "Technician": "m_queue", "Supervisor": "d_verify", "Production": "d_prodverify",
+    "Operator": "m_machine", "Maintenance": "m_queue", "Production": "d_prodverify",
     "Store Keeper": "d_master", "Manager": "d_dashboard", "Admin": "d_admin"
   };
   const submit = (e) => {e.preventDefault();ctx.login(role, homeFor[role]);};
@@ -78,8 +79,17 @@ function LoginScreen({ ctx }) {
             </select>
             <div className="hint">ตัวอย่าง prototype — เลือกบทบาทเพื่อดูเมนูและสิทธิ์ที่ต่างกัน</div>
           </div>
+          {scannedMC &&
+          <div style={{ background:"var(--accent-bg)", border:"1px solid var(--accent)", borderRadius:10, padding:"12px 14px", marginBottom:12, display:"flex", gap:10, alignItems:"flex-start" }}>
+            <Icon name="qr" size={18} style={{ color:"var(--accent)", flex:"none", marginTop:1 }} />
+            <div>
+              <div style={{ fontWeight:700, fontSize:13 }}>สแกน QR เครื่องจักร</div>
+              <div style={{ fontWeight:600, fontSize:15, margin:"2px 0" }}>{scannedMC.code} — {scannedMC.name}</div>
+              <div style={{ fontSize:12, color:"var(--ink-3)" }}>หลังเข้าสู่ระบบจะเด้งไปหน้าแจ้งซ่อมทันที</div>
+            </div>
+          </div>}
           <button className="btn btn-primary btn-lg btn-block" type="submit" style={{ marginTop: 8 }}>
-            เข้าสู่ระบบ <Icon name="chevR" size={17} />
+            {scannedMC ? <><Icon name="wrench" size={17}/> เข้าสู่ระบบและแจ้งซ่อม</> : <>เข้าสู่ระบบ <Icon name="chevR" size={17}/></>}
           </button>
           <div className="tiny muted-2" style={{ textAlign: "center", marginTop: 22, letterSpacing: ".04em" }}>v1.0 · Industrial Maintenance System</div>
         </form>
@@ -402,23 +412,36 @@ const PRI_ORDER = { Critical: 0, High: 1, Medium: 2, Low: 3 };
 function TechQueue({ ctx }) {
   const [tab, setTab] = useState("open");
   const open = Dm.requests.filter((r) => r.status === "Waiting" || r.status === "In Progress");
-  const done = Dm.requests.filter((r) => r.status === "Completed");
-  const list = (tab === "open" ? open : done).slice().sort((a, b) => PRI_ORDER[a.priority] - PRI_ORDER[b.priority]);
+  const returned = Dm.requests.filter((r) => r.status === "Returned");
+  const done = Dm.requests.filter((r) => r.status === "Completed" || r.status === "Resubmitted");
+  const list = (tab === "open" ? open : tab === "returned" ? returned : done).slice().sort((a, b) => PRI_ORDER[a.priority] - PRI_ORDER[b.priority]);
   return (
     <div>
       <div className="seg" style={{ marginBottom: 14 }}>
         <div className={"seg-opt" + (tab === "open" ? " on-medium" : "")} onClick={() => setTab("open")}>รอ/กำลังทำ ({open.length})</div>
+        <div className={"seg-opt" + (tab === "returned" ? " on-critical" : "")} onClick={() => setTab("returned")} style={{ position: "relative" }}>
+          ส่งกลับซ่อม
+          {returned.length > 0
+            ? <span style={{ marginLeft: 6, background: tab === "returned" ? "#fff" : "var(--red)", color: tab === "returned" ? "var(--red)" : "#fff", borderRadius: 99, fontSize: 11, fontWeight: 700, padding: "1px 7px" }}>{returned.length}</span>
+            : <span style={{ marginLeft: 6, opacity: 0.5 }}>0</span>}
+        </div>
         <div className={"seg-opt" + (tab === "done" ? " on-low" : "")} onClick={() => setTab("done")}>เสร็จแล้ว ({done.length})</div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(420px,1fr))", gap: 14 }}>
         {list.map((r) => {
           const mc = Dm.machineByCode(r.mc);
-          const hot = r.priority === "Critical" || mc && mc.rank === "A" && r.status !== "Completed";
+          const isReturned = r.status === "Returned";
+          const hot = isReturned || r.priority === "Critical" || (mc && mc.rank === "A" && r.status !== "Completed" && r.status !== "Resubmitted");
           return (
             <div key={r.no} className="card" style={{ overflow: "hidden",
               borderColor: hot ? "var(--red)" : "var(--border)", borderWidth: hot ? 1.5 : 1 }}>
-              {hot && <div style={{ background: "var(--red)", color: "#fff", padding: "5px 14px", fontSize: 11.5, fontWeight: 700, letterSpacing: ".05em", display: "flex", alignItems: "center", gap: 6 }}>
-                <Icon name="alert" size={13} /> งานวิกฤต — ต้องดำเนินการทันที</div>}
+              {isReturned
+                ? <div style={{ background: "var(--red)", color: "#fff", padding: "5px 14px", fontSize: 11.5, fontWeight: 700, letterSpacing: ".05em", display: "flex", alignItems: "center", gap: 6 }}>
+                    <Icon name="x" size={13} /> ฝ่ายผลิตส่งงานคืน{r.reviewRound > 0 ? ` (รอบที่ ${r.reviewRound})` : ""} — กรุณาแก้ไขผลซ่อม
+                  </div>
+                : hot && <div style={{ background: "var(--red)", color: "#fff", padding: "5px 14px", fontSize: 11.5, fontWeight: 700, letterSpacing: ".05em", display: "flex", alignItems: "center", gap: 6 }}>
+                    <Icon name="alert" size={13} /> งานวิกฤต — ต้องดำเนินการทันที
+                  </div>}
               <div className="card-pad">
                 <div className="row between">
                   <span className="mono small" style={{ fontWeight: 600 }}>{r.no}</span>
@@ -429,10 +452,13 @@ function TechQueue({ ctx }) {
                   <span className="small muted">{r.mcName}</span>
                   {mc && <RankPill rank={mc.rank} />}
                 </div>
-                <div className="small" style={{ marginBottom: 12 }}>{r.problem}</div>
+                <div className="small" style={{ marginBottom: isReturned && r.prodReason ? 6 : 12 }}>{r.problem}</div>
+                {isReturned && r.prodReason && <div className="small" style={{ marginBottom: 12, color: "var(--red)", background: "var(--red-bg,#fff5f5)", borderRadius: 7, padding: "5px 9px" }}>เหตุผล: {r.prodReason}</div>}
                 <div className="row between">
                   <span className="tiny muted-2 mono"><Icon name="clock" size={12} /> {r.date}</span>
-                  {r.status === "In Progress" ?
+                  {isReturned ?
+                  <button className="btn btn-sm btn-danger" onClick={() => ctx.go("m_repair", { reqNo: r.no })}>แก้ไขผลซ่อม <Icon name="chevR" size={14} /></button> :
+                  r.status === "In Progress" ?
                   <button className="btn btn-sm btn-accent" onClick={() => ctx.go("m_repair", { reqNo: r.no })}>บันทึกผลซ่อม <Icon name="chevR" size={14} /></button> :
                   tab === "open" ?
                   <button className="btn btn-sm btn-primary" onClick={() => {ctx.toast("รับงาน " + r.no + " แล้ว");ctx.go("m_repair", { reqNo: r.no });}}>กดรับงาน</button> :
@@ -451,10 +477,11 @@ function TechQueue({ ctx }) {
 /* ---------------- 5.7 Repair form (technician) ---------------- */
 function RepairForm({ ctx }) {
   const r = Dm.requests.find((x) => x.no === ctx.params.reqNo) || null;
+  const existingRep = Dm.repairs[ctx.params.reqNo] || null;
   const [cat, setCat] = useState("Mechanical");
   const [cause, setCause] = useState("เสื่อมสภาพ");
-  const [rootInput, setRootInput] = useState("");
-  const [actionInput, setActionInput] = useState("");
+  const [rootInput, setRootInput] = useState(existingRep?.root || "");
+  const [actionInput, setActionInput] = useState(existingRep?.action || "");
   const [startTime, setStartTime] = useState("13:15");
   const [endTime, setEndTime] = useState("15:30");
   const [rows, setRows] = useState([{ code: "", qty: 1 }]);
@@ -492,7 +519,7 @@ function RepairForm({ ctx }) {
       const p = Dm.partByCode(row.code);
       return { code: row.code, qty: row.qty, unit: p?.price };
     });
-    const repair = { root: rootInput.trim(), action: actionInput.trim(), hrs: calcHrs(startTime, endTime), verify: "Pending" };
+    const repair = { root: rootInput.trim(), action: actionInput.trim(), hrs: calcHrs(startTime, endTime), verify: "Approved" };
     if (typeof window.DATA?.saveRepair === "function") {
       setSaving(true);
       try {
@@ -512,6 +539,10 @@ function RepairForm({ ctx }) {
 
   return (
     <div>
+      {r.status === "Returned" && <div className="card card-pad" style={{ marginBottom: 14, background: "var(--red-bg,#fff5f5)", border: "1.5px solid var(--red)", borderRadius: 11 }}>
+        <div className="row gap-sm" style={{ marginBottom: r.prodReason ? 6 : 0 }}><Icon name="x" size={16} style={{ color: "var(--red)", flex: "none" }} /><span className="small" style={{ fontWeight: 700, color: "var(--red)" }}>ฝ่ายผลิตส่งงานคืน — กรุณาแก้ไขและส่งใหม่</span></div>
+        {r.prodReason && <div className="small muted" style={{ paddingLeft: 24 }}>เหตุผล: {r.prodReason}</div>}
+      </div>}
       <div className="card card-pad" style={{ marginBottom: 14, background: "var(--surface-2)" }}>
         <div className="row between">
           <span className="mono" style={{ fontWeight: 600 }}>{r.no}</span>
@@ -566,7 +597,7 @@ function RepairForm({ ctx }) {
 
       <div className="card card-pad" style={{ background: "var(--amber-bg)", border: "1px solid #f0dcb4", display: "flex", gap: 10, marginBottom: 14 }}>
         <span style={{ color: "var(--amber)" }}><Icon name="alert" size={18} /></span>
-        <div className="small" style={{ color: "var(--amber-ink)" }}>การบันทึกจะตัดสต็อกอะไหล่ออกจากคลังโดยอัตโนมัติ และส่งให้หัวหน้างานตรวจรับ</div>
+        <div className="small" style={{ color: "var(--amber-ink)" }}>การบันทึกจะตัดสต็อกอะไหล่ออกจากคลังโดยอัตโนมัติ และปิดงานทันที</div>
       </div>
 
       <button className="btn btn-success btn-lg btn-block" onClick={save} disabled={saving}>
@@ -695,7 +726,7 @@ function MobileDetail({ ctx }) {
       <div className="card card-pad" style={{ marginBottom: 14 }}>
         <div className="h-sm" style={{ marginBottom: 14 }}>สถานะการดำเนินงาน</div>
         <Timeline steps={steps} />
-        {r.status === "Completed" &&
+        {(r.status === "Completed" || r.status === "Resubmitted") &&
         <div style={{ marginTop: 4, paddingTop: 14, borderTop: "1px solid var(--border)", display: "flex", gap: 12, alignItems: "flex-start" }}>
             <span style={{ width: 20, height: 20, borderRadius: "50%", flex: "none", display: "flex", alignItems: "center", justifyContent: "center", background: prodInfo.dot, color: "#fff" }}>
               {prodInfo.icon ? <Icon name={prodInfo.icon} size={12} /> : <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fff" }}></span>}
@@ -741,10 +772,11 @@ function buildTimeline(r, rep) {
   const accepted = r.status !== "Waiting";
   steps.push({ title: "รับงาน", desc: r.acceptedBy || (rep ? rep.tech : "—"), time: accepted ? (r.acceptedAt || r.start) : "", state: accepted ? "done" : "" });
   const repairing = r.status === "In Progress";
-  const repaired = r.status === "Completed";
+  const repaired = r.status === "Completed" || r.status === "Returned" || r.status === "Resubmitted";
   steps.push({ title: "ซ่อม", desc: rep ? rep.action : "", time: r.finish || "", state: repaired ? "done" : repairing ? "active" : "" });
-  const approved = rep && rep.verify === "Approved";
-  steps.push({ title: "ตรวจรับ", desc: approved ? "โดย " + rep.by : "รอหัวหน้าตรวจรับ", time: "", state: approved ? "done" : "" });
+  if (r.status === "Returned") {
+    steps.push({ title: "ส่งกลับซ่อม", desc: r.prodReason || "ฝ่ายผลิตส่งงานคืน", time: "", state: "warn" });
+  }
   return steps;
 }
 

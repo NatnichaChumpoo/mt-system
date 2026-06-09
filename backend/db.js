@@ -48,7 +48,7 @@ export const pool = mysql.createPool({
   database: dbConfig.database,
   waitForConnections: true,
   connectionLimit: 10,
-  charset: "utf8mb4_0900_ai_ci",
+  charset: "utf8mb4",
   dateStrings: true,
 });
 
