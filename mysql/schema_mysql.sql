@@ -346,16 +346,19 @@ BEGIN
   END IF;
 END$$
 
--- แจ้งเตือนเมื่อสต็อกต่ำกว่า ROP
+-- แจ้งเตือนเมื่อสต็อกต่ำกว่า ROP (ส่งเข้า Telegram กลุ่ม Store Keeper)
 CREATE TRIGGER trg_notify_low_stock AFTER UPDATE ON spare_parts
 FOR EACH ROW
 BEGIN
+  DECLARE v_msg TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
   IF @mt_seed IS NULL AND NEW.current_stock < NEW.rop AND OLD.current_stock <> NEW.current_stock THEN
+    SET v_msg = CONCAT('📦 <b>แจ้งเตือนสต็อกอะไหล่ต่ำกว่าจุดสั่งซื้อ (ROP)</b>\n',
+                        'รหัส: ', NEW.code, ' — ', NEW.name, '\n',
+                        'คงเหลือ: ', NEW.current_stock, ' | ROP: ', NEW.rop,
+                        IF(NEW.current_stock <= 0, '\n⚠️ สถานะ: ของหมด', ''),
+                        '\nกรุณาดำเนินการสั่งซื้อเพิ่ม');
     INSERT INTO notification_log(channel, recipient, subject, message, related_part_id)
-      SELECT 'email', email, CONCAT('STOCK ALERT: ', NEW.code),
-             CONCAT('Part ', NEW.code, ' (', NEW.name, ') stock=', NEW.current_stock,
-                    ' below ROP(', NEW.rop, ')'), NEW.id
-      FROM app_users WHERE role IN ('purchasing','store') AND email IS NOT NULL;
+      VALUES ('telegram', COALESCE(@telegram_store_chat, 'STORE_CHAT'), CONCAT('STOCK ALERT: ', NEW.code), v_msg, NEW.id);
   END IF;
 END$$
 

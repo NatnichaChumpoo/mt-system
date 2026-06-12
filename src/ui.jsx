@@ -52,7 +52,7 @@ function Icon({ name, size = 18, style }) {
 
 /* ---------------- Status badges ---------------- */
 const STOCK_BADGE = {
-  critical: { cls:"b-red",   label:"วิกฤต (ของหมด)" },
+  critical: { cls:"b-red",   label:"ของหมด" },
   reorder:  { cls:"b-amber", label:"ควรสั่งซื้อ" },
   normal:   { cls:"b-green", label:"ปกติ" },
 };
@@ -226,6 +226,77 @@ function Modal({ title, onClose, children, wide }) {
       </div>
     </div>
   );
+}
+
+/* ---------------- Export menu (Excel / PDF) ---------------- */
+function ExportMenuButton({ label = "ส่งออก", onExcel, onPdf, primary, disabled }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  const pick = (fn) => { setOpen(false); fn && fn(); };
+  return (
+    <div ref={ref} style={{ position:"relative", display:"inline-block" }}>
+      <button className={"btn" + (primary ? " btn-primary" : "")} disabled={disabled} onClick={()=>setOpen(o=>!o)}>
+        <Icon name="download" size={15}/> {label} <Icon name="chevD" size={13}/>
+      </button>
+      {open &&
+        <div className="card" style={{ position:"absolute", top:"calc(100% + 6px)", right:0, zIndex:80, minWidth:170, padding:6 }}>
+          <button className="btn btn-ghost btn-block" style={{ justifyContent:"flex-start" }} onClick={()=>pick(onExcel)}>ไฟล์ Excel (.xlsx)</button>
+          <button className="btn btn-ghost btn-block" style={{ justifyContent:"flex-start", marginTop:4 }} onClick={()=>pick(onPdf)}>ไฟล์ PDF</button>
+        </div>
+      }
+    </div>
+  );
+}
+
+/* ---------------- Print a PO-style document (export PDF via browser print) ---------------- */
+function printPODocument({ title, subtitle, meta = [], items = [], totalLabel = "มูลค่ารวม", total }) {
+  const w = window.open("", "_blank");
+  if (!w) return false;
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+  const metaHtml = meta.map(m => `<div class="meta-item"><span class="lbl">${esc(m.label)}</span><span class="val">${esc(m.value)}</span></div>`).join("");
+  const rowsHtml = items.map(it => `
+    <tr>
+      <td>${esc(it.code)}</td>
+      <td>${esc(it.name)}</td>
+      <td class="num">${esc(it.qty)}</td>
+      <td class="num">${esc(it.unit)}</td>
+      <td class="num">${esc(it.sum)}</td>
+    </tr>`).join("");
+  w.document.write(`<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8"><title>${esc(title)}</title>
+<style>
+  *{ box-sizing:border-box; }
+  body{ font-family:"Tahoma","Segoe UI",sans-serif; padding:32px; color:#1a1a1a; }
+  h1{ font-size:20px; margin:0 0 2px; }
+  .sub{ font-size:13px; color:#777; margin-bottom:18px; }
+  .meta{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px 24px; margin-bottom:18px; font-size:13px; }
+  .meta-item .lbl{ display:block; color:#888; font-size:11px; }
+  .meta-item .val{ font-weight:700; }
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  th,td{ border:1px solid #ccc; padding:6px 8px; text-align:left; }
+  th{ background:#f3f1ec; }
+  .num{ text-align:right; }
+  tfoot td{ font-weight:700; }
+</style></head>
+<body>
+  <h1>${esc(title)}</h1>
+  ${subtitle ? `<div class="sub">${esc(subtitle)}</div>` : ""}
+  ${metaHtml ? `<div class="meta">${metaHtml}</div>` : ""}
+  <table>
+    <thead><tr><th>Part Code</th><th>ชื่ออะไหล่</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">รวม</th></tr></thead>
+    <tbody>${rowsHtml}</tbody>
+    <tfoot><tr><td colspan="4" class="num">${esc(totalLabel)}</td><td class="num">${esc(total)}</td></tr></tfoot>
+  </table>
+  <script>window.onload=function(){ window.print(); };<\/script>
+</body></html>`);
+  w.document.close();
+  return true;
 }
 
 /* ---------------- Toast ---------------- */

@@ -10,6 +10,7 @@ function MasterData({ ctx }) {
   const [grp, setGrp] = useState("all");
   const [st, setSt] = useState("all");
   const [adding, setAdding] = useState(false);
+  const [viewingCode, setViewingCode] = useState(null);
   const groups = ["all", ...Array.from(new Set(Ds.parts.map(p=>p.group)))];
   let rows = Ds.parts.filter(p => {
     if (grp!=="all" && p.group!==grp) return false;
@@ -24,7 +25,7 @@ function MasterData({ ctx }) {
     reorder: Ds.parts.filter(p=>p.status==="reorder").length,
     normal: Ds.parts.filter(p=>p.status==="normal").length,
   };
-  const statusLabel = { critical:"วิกฤต (ของหมด)", reorder:"ควรสั่งซื้อ", normal:"ปกติ" };
+  const statusLabel = { critical:"ของหมด", reorder:"ควรสั่งซื้อ", normal:"ปกติ" };
   const exportXlsx = () => {
     if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
     const data = sorted.map(p => ({
@@ -44,11 +45,31 @@ function MasterData({ ctx }) {
         <><button className="btn" onClick={exportXlsx}><Icon name="download" size={15}/> ส่งออก</button><button className="btn btn-primary" onClick={()=>setAdding(true)}><Icon name="plus" size={15}/> เพิ่มอะไหล่</button></>
       } />
       {adding && <AddPartModal ctx={ctx} groups={groups.filter(g=>g!=="all")} onClose={()=>setAdding(false)} />}
+      {viewingCode && <PartWorkspaceModal ctx={ctx} code={viewingCode} onClose={()=>setViewingCode(null)} />}
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", marginBottom:16}}>
         <MiniStat label="รายการทั้งหมด" value={Ds.parts.length} color="var(--navy)" icon="box"/>
-        <MiniStat label="วิกฤต (ของหมด)" value={counts.critical} color="var(--red)" icon="alert"/>
+        <MiniStat label="ของหมด" value={counts.critical} color="var(--red)" icon="alert"/>
         <MiniStat label="ควรสั่งซื้อ" value={counts.reorder} color="var(--amber)" icon="truck"/>
         <MiniStat label="มูลค่าคงคลัง" value={Ds.fmtMoney(totalVal)} color="var(--green)" icon="chart"/>
+      </div>
+      <div className="panel" style={{marginBottom:16}}>
+        <div className="panel-head"><div className="h-sm">ตัวชี้วัดคลังอะไหล่</div></div>
+        <div className="panel-body grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:14}}>
+          {(Ds.invKpi||[]).map(k=>{
+            const color = k.state==="bad"?"var(--red)":k.state==="warn"?"var(--amber)":"var(--green)";
+            const pct = k.money ? Math.min(100, k.value/(k.target*2)*100) : k.unit==="%" ? k.value : Math.min(100,k.value/k.target*100);
+            return (
+              <div key={k.name} className="card card-pad">
+                <div className="small muted" style={{marginBottom:8}}>{k.name}</div>
+                <div className="row between" style={{alignItems:"baseline"}}>
+                  <span className="mono" style={{fontSize:22, fontWeight:700}}>{k.money?Ds.fmtMoney(k.value):k.value+(k.unit==="%"?"%":"")}</span>
+                  <span className="tiny muted-2">เป้า {k.money?Ds.fmtMoney(k.target):k.target+(k.unit==="%"?"%":"")}</span>
+                </div>
+                <div className="progress" style={{marginTop:9}}><span style={{width:pct+"%", background:color}}></span></div>
+              </div>
+            );
+          })}
+        </div>
       </div>
       <div className="panel">
         <div className="panel-head wrap" style={{gap:10}}>
@@ -57,7 +78,7 @@ function MasterData({ ctx }) {
             <select className="select" style={{width:"auto"}} value={grp} onChange={e=>setGrp(e.target.value)}>
               {groups.map(g=><option key={g} value={g}>{g==="all"?"ทุกกลุ่ม":g}</option>)}
             </select>
-            <FilterChips value={st} onChange={setSt} opts={[["all","ทั้งหมด"],["critical","วิกฤต"],["reorder","ควรสั่ง"],["normal","ปกติ"]]} />
+            <FilterChips value={st} onChange={setSt} opts={[["all","ทั้งหมด"],["critical","ของหมด"],["reorder","ควรสั่ง"],["normal","ปกติ"]]} />
           </div>
         </div>
         <div className="table-wrap" style={{maxHeight:"60vh"}}>
@@ -78,7 +99,7 @@ function MasterData({ ctx }) {
             </tr></thead>
             <tbody>
               {sorted.map(p=>(
-                <tr key={p.code} className={p.status==="critical"?"row-red":p.status==="reorder"?"row-amber":""}>
+                <tr key={p.code} className={p.status==="critical"?"row-red":p.status==="reorder"?"row-amber":""} style={{cursor:"pointer"}} onClick={()=>setViewingCode(p.code)}>
                   <td className="cell-code">{p.code}</td>
                   <td className="small" style={{maxWidth:230}}>{p.name}<div className="tiny muted-2">{p.brand}</div></td>
                   <td><span className="chip">{p.group}</span></td>
@@ -103,6 +124,113 @@ function MasterData({ ctx }) {
 function PartRankTag({ rank }) {
   const m = { Critical:"tag-critical", Medium:"tag-high", Low:"tag-low" };
   return <span className={"tag "+(m[rank]||"tag-low")}>{rank}</span>;
+}
+
+function DetailField({ label, value, mono }) {
+  return (
+    <div className="card card-pad" style={{background:"var(--surface-2)"}}>
+      <div className="tiny muted">{label}</div>
+      <div className={mono?"mono":""} style={{fontWeight:700, fontSize:16, marginTop:4}}>{value}</div>
+    </div>
+  );
+}
+
+function PartDetailBody({ part, onEdit, onHistory }) {
+  const statusLabel = { critical:"ของหมด", reorder:"ควรสั่งซื้อ", normal:"ปกติ" };
+  return (
+    <div className="stack">
+      <div className="row between" style={{alignItems:"flex-start"}}>
+        <div>
+          <div className="h-md">{part.name}</div>
+          {part.brand && part.brand!=="—" && <div className="tiny muted-2">{part.brand}</div>}
+        </div>
+        <div className="row gap-sm">
+          <PartRankTag rank={part.partRank}/>
+          <StockBadge status={part.status}/>
+        </div>
+      </div>
+      <div className="grid" style={{gridTemplateColumns:"repeat(4,1fr)", gap:14}}>
+        <DetailField label="กลุ่มเครื่องจักร" value={part.group}/>
+        <DetailField label="คงคลังปัจจุบัน" value={part.cur} mono/>
+        <DetailField label="มูลค่าคงคลัง" value={part.value?Ds.fmtMoney(part.value):"—"}/>
+        <DetailField label="ราคา/หน่วย" value={part.price?Ds.fmtMoney(part.price):"—"}/>
+        <DetailField label="Max" value={part.max} mono/>
+        <DetailField label="Min" value={part.min} mono/>
+        <DetailField label="Safety Stock" value={part.safety} mono/>
+        <DetailField label="ROP" value={part.rop} mono/>
+        <DetailField label="Lead Time" value={part.leadTime+" วัน"}/>
+        <DetailField label="สถานะ" value={statusLabel[part.status]||part.status}/>
+      </div>
+      <div className="row gap-sm" style={{justifyContent:"flex-end", marginTop:4}}>
+        <button className="btn" onClick={onHistory}><Icon name="clock" size={15}/> ดูประวัติ</button>
+        <button className="btn btn-primary" onClick={onEdit}><Icon name="edit" size={15}/> แก้ไขอะไหล่</button>
+      </div>
+    </div>
+  );
+}
+
+function PartHistoryBody({ part }) {
+  const ins = (Ds.stockIn||[]).filter(l=>l.code===part.code).map(l=>({...l, type:"IN"}));
+  const outs = (Ds.stockOut||[]).filter(l=>l.code===part.code).map(l=>({...l, type:"OUT"}));
+  const rows = [...ins, ...outs].sort((a,b)=> new Date(b.date) - new Date(a.date));
+  return (
+    <div className="stack">
+      <div className="grid" style={{gridTemplateColumns:"1fr 1fr 1fr", gap:14}}>
+        <div className="card card-pad" style={{background:"var(--surface-2)"}}>
+          <div className="tiny muted">คงคลังปัจจุบัน</div>
+          <div className="mono" style={{fontWeight:800, fontSize:18}}>{part.cur}</div>
+        </div>
+        <div className="card card-pad" style={{background:"var(--surface-2)"}}>
+          <div className="tiny muted">รับเข้าทั้งหมด</div>
+          <div className="mono" style={{fontWeight:800, fontSize:18, color:"var(--green-ink)"}}>+{ins.reduce((s,l)=>s+l.qty,0)}</div>
+        </div>
+        <div className="card card-pad" style={{background:"var(--surface-2)"}}>
+          <div className="tiny muted">เบิกออกทั้งหมด</div>
+          <div className="mono" style={{fontWeight:800, fontSize:18, color:"var(--red-ink)"}}>−{outs.reduce((s,l)=>s+l.qty,0)}</div>
+        </div>
+      </div>
+      <div className="table-wrap" style={{maxHeight:360}}>
+        <table className="tbl">
+          <thead><tr><th>วันที่</th><th>เลขเอกสาร</th><th>ประเภท</th><th className="num">จำนวน</th><th>โดย</th><th>เครื่อง / เหตุผล</th></tr></thead>
+          <tbody>{rows.map((l,i)=>(
+            <tr key={i}>
+              <td className="mono small muted">{l.date}</td>
+              <td className="cell-code">{l.doc}</td>
+              <td>{l.type==="IN" ? <span className="tag tag-low">รับเข้า</span> : <span className="tag tag-critical">เบิกออก</span>}</td>
+              <td className="num mono" style={{fontWeight:700, color:l.type==="IN"?"var(--green-ink)":"var(--red-ink)"}}>{l.type==="IN"?"+":"−"}{l.qty}</td>
+              <td className="small muted">{l.by}</td>
+              <td className="small muted">{l.type==="OUT" ? [l.mc, l.reason].filter(Boolean).join(" · ") : "—"}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {rows.length === 0 && <div className="small muted" style={{padding:24, textAlign:"center"}}>ยังไม่มีประวัติการเคลื่อนไหวสำหรับอะไหล่นี้</div>}
+      </div>
+    </div>
+  );
+}
+
+function PartWorkspaceModal({ ctx, code, onClose }) {
+  const [subView, setSubView] = useState("detail"); // "detail" | "history" | "edit"
+  const part = Ds.partByCode(code);
+  if (!part) return null;
+  const back = () => setSubView("detail");
+  const titles = {
+    detail: `รายละเอียดอะไหล่ — ${part.code}`,
+    history: `ประวัติการเคลื่อนไหว — ${part.code} ${part.name}`,
+    edit: `แก้ไขอะไหล่ — ${part.code}`,
+  };
+  return (
+    <Modal title={titles[subView]} onClose={onClose} wide>
+      {subView !== "detail" &&
+        <button className="btn" style={{marginBottom:14}} onClick={back}>
+          <Icon name="chevL" size={14}/> กลับไปหน้ารายละเอียด
+        </button>
+      }
+      {subView === "detail" && <PartDetailBody part={part} onEdit={()=>setSubView("edit")} onHistory={()=>setSubView("history")} />}
+      {subView === "history" && <PartHistoryBody part={part} />}
+      {subView === "edit" && <EditPartFields ctx={ctx} part={part} onDone={back} onCancel={back} />}
+    </Modal>
+  );
 }
 
 function AddPartModal({ ctx, groups, onClose }) {
@@ -255,7 +383,7 @@ function ReorderList({ ctx }) {
   const toggleAll = ()=> setSel(all? new Set() : new Set(sorted.map(p=>p.code)));
   const selRows = sorted.filter(p=>sel.has(p.code));
   const estCost = selRows.reduce((s,p)=>s + p.price*p.suggest, 0);
-  const exportPO = () => {
+  const exportPOExcel = () => {
     if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
     const rowsToExport = selRows.length > 0 ? selRows : sorted;
     if (rowsToExport.length === 0) { ctx.toast("ไม่มีรายการให้ส่งออก", "error"); return; }
@@ -270,17 +398,29 @@ function ReorderList({ ctx }) {
     XLSX.writeFile(wb, "ใบสั่งซื้อ_" + new Date().toISOString().slice(0,10) + ".xlsx");
     ctx.toast("ส่งออกใบสั่งซื้อ "+data.length+" รายการแล้ว", "check");
   };
+  const exportPOPdf = () => {
+    const rowsToExport = selRows.length > 0 ? selRows : sorted;
+    if (rowsToExport.length === 0) { ctx.toast("ไม่มีรายการให้ส่งออก", "error"); return; }
+    const total = rowsToExport.reduce((s,p)=>s + p.price*p.suggest, 0);
+    printPODocument({
+      title: "ใบขอสั่งซื้ออะไหล่ (Reorder)",
+      subtitle: "ออกเมื่อ " + new Date().toLocaleDateString("th-TH"),
+      meta: [{ label:"จำนวนรายการ", value: rowsToExport.length + " รายการ" }],
+      items: rowsToExport.map(p => ({ code:p.code, name:p.name, qty:p.suggest, unit:Ds.fmtMoney(p.price), sum:Ds.fmtMoney(p.price*p.suggest) })),
+      total: Ds.fmtMoney(total),
+    });
+  };
   return (
     <div>
       <PageHead title="รายการต้องสั่งซื้อ (Reorder)" sub={`อะไหล่ที่คงคลัง ≤ ROP · ${rows.length} รายการ`} actions={
-        <><button className="btn" onClick={exportPO}><Icon name="download" size={15}/> ส่งออกใบสั่งซื้อ</button>
+        <><ExportMenuButton label="ส่งออกใบสั่งซื้อ" onExcel={exportPOExcel} onPdf={exportPOPdf} />
         <button className="btn btn-primary" disabled={sel.size===0} onClick={()=>setShowCreatePO(true)}><Icon name="plus" size={15}/> สร้าง PO ({sel.size})</button></>
       } />
       {showCreatePO && <CreatePOModal ctx={ctx} rows={selRows} onClose={()=>setShowCreatePO(false)}
         onDone={()=>{ setShowCreatePO(false); setSel(new Set()); }} />}
       <div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", marginBottom:16}}>
         <MiniStat label="ต้องสั่งซื้อ" value={rows.length} color="var(--amber)" icon="truck"/>
-        <MiniStat label="ของหมด (วิกฤต)" value={rows.filter(p=>p.status==="critical").length} color="var(--red)" icon="alert"/>
+        <MiniStat label="ของหมด" value={rows.filter(p=>p.status==="critical").length} color="var(--red)" icon="alert"/>
         <MiniStat label="เลือกแล้ว" value={sel.size} color="var(--navy)" icon="clipboard"/>
         <MiniStat label="มูลค่าที่เลือก (ประมาณ)" value={Ds.fmtMoney(estCost)} color="var(--green)" icon="chart"/>
       </div>
@@ -323,11 +463,39 @@ function ReorderList({ ctx }) {
 }
 
 /* ---------------- 5.10b ประวัติใบสั่งซื้อ ---------------- */
-function PODetailModal({ po, onClose }) {
+function PODetailModal({ ctx, po, onClose }) {
   const items = (Ds.poItems && Ds.poItems[po.no]) || [];
+  const exportExcel = () => {
+    if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
+    const data = items.map(it => ({
+      "Part Code": it.code, "ชื่ออะไหล่": it.name, "จำนวน": it.qty,
+      "ราคา/หน่วย": it.unit, "มูลค่ารวม": it.unit*it.qty,
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, po.no);
+    XLSX.writeFile(wb, `ใบสั่งซื้อ_${po.no}.xlsx`);
+    ctx.toast("ส่งออก "+po.no+" แล้ว", "check");
+  };
+  const exportPdf = () => {
+    printPODocument({
+      title: `ใบสั่งซื้อ ${po.no}`,
+      subtitle: `ผู้ขาย: ${po.supplier}  ·  วันที่สร้าง: ${po.date}`,
+      meta: [
+        { label:"กำหนดรับ", value: po.expected || "—" },
+        { label:"จำนวนรายการ", value: po.items + " รายการ" },
+        { label:"หมายเหตุ", value: po.note || "—" },
+      ],
+      items: items.map(it => ({ code:it.code, name:it.name, qty:it.qty, unit:Ds.fmtMoney(it.unit), sum:Ds.fmtMoney(it.unit*it.qty) })),
+      total: Ds.fmtMoney(po.total),
+    });
+  };
   return (
     <Modal title={`ใบสั่งซื้อ ${po.no}`} onClose={onClose} wide>
       <div className="stack">
+        <div className="row" style={{justifyContent:"flex-end"}}>
+          <ExportMenuButton label="ส่งออก" onExcel={exportExcel} onPdf={exportPdf} />
+        </div>
         <div className="grid" style={{gridTemplateColumns:"1fr 1fr", gap:14}}>
           <div className="card card-pad" style={{background:"var(--surface-2)"}}>
             <div className="tiny muted">ผู้ขาย</div>
@@ -393,7 +561,7 @@ function POHistory({ ctx }) {
           {pos.length === 0 && <div className="small muted" style={{padding:24, textAlign:"center"}}>ยังไม่มีใบสั่งซื้อที่สร้างไว้</div>}
         </div>
       </div>
-      {selPO && <PODetailModal po={selPO} onClose={()=>setSelPO(null)} />}
+      {selPO && <PODetailModal ctx={ctx} po={selPO} onClose={()=>setSelPO(null)} />}
     </div>
   );
 }
@@ -403,14 +571,15 @@ function StockInOut({ ctx }) {
   const [mode, setMode] = useState("in");
   const [code, setCode] = useState("");
   const [qty, setQty] = useState(1);
-  const [by, setBy] = useState("");
+  const currentUser = Ds.roleUser?.[ctx.role]?.name || "";
+  const [by, setBy] = useState(currentUser);
   const [mc, setMc] = useState("");
   const [reason, setReason] = useState("");
-  const [date, setDate] = useState("2026-05-30");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0,10));
   const [submitting, setSubmitting] = useState(false);
   const part = Ds.partByCode(code);
   const log = mode==="in" ? Ds.stockIn : Ds.stockOut;
-  const reset = () => { setCode(""); setQty(1); setBy(""); setMc(""); setReason(""); };
+  const reset = () => { setCode(""); setQty(1); setBy(currentUser); setMc(""); setReason(""); };
   const save = async ()=>{
     if (submitting) return;
     if(!code){ ctx.toast("กรุณาเลือกอะไหล่","error"); return; }

@@ -95,10 +95,28 @@ function RequestList({ ctx }) {
   });
   const { sorted, sort, onSort } = useSort(rows, { key: "date", dir: -1 });
 
+  const exportXlsx = () => {
+    if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
+    const data = sorted.map((r) => ({
+      "เลขที่ใบแจ้ง": r.no, "รหัสเครื่อง": r.mc, "ชื่อเครื่อง": r.mcName,
+      "อาการ": r.problem, "ความรุนแรง": r.priority, "สถานะ": r.status,
+      "วันที่แจ้ง": r.date ? String(r.date).slice(0, 16).replace("T", " ") : "",
+      "ผู้แจ้ง": r.reporter, "แผนก": r.dept,
+      "Downtime (ชม.)": r.downtime != null ? r.downtime : "",
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "ใบแจ้งซ่อม");
+    XLSX.writeFile(wb, "ใบแจ้งซ่อม_" + new Date().toISOString().slice(0, 10) + ".xlsx");
+    ctx.toast("ส่งออก " + data.length + " รายการแล้ว", "check");
+  };
+
   if (creating) return <RequestCreateDesktop ctx={ctx} onBack={() => setCreating(false)} />;
   return (
     <div>
-      <PageHead title="ใบแจ้งซ่อมทั้งหมด" sub="Maintenance Requests" />
+      <PageHead title="ใบแจ้งซ่อมทั้งหมด" sub="Maintenance Requests" actions={
+        <button className="btn" onClick={exportXlsx}><Icon name="download" size={15} /> ส่งออก Excel</button>
+      } />
       <div className="panel">
         <div className="panel-head wrap" style={{ gap: 10 }}>
           <SearchBar value={q} onChange={setQ} placeholder="ค้นหา REQ / เครื่อง / อาการ" />
@@ -213,8 +231,8 @@ function RequestDetail({ ctx }) {
               <div className="panel-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <Field2 k="ช่างผู้ซ่อม" v={rep.tech} />
                 <Field2 k="หมวดปัญหา" v={rep.cat} />
-                <Field2 k="สาเหตุราก (Root Cause)" v={rep.root} span />
-                <Field2 k="วิธีแก้ไข (Corrective Action)" v={rep.action} span />
+                <Field2 k="สาเหตุหลัก" v={rep.root} span />
+                <Field2 k="วิธีการแก้ปัญหา" v={rep.action} span />
                 <Field2 k="ประเภทสาเหตุ" v={rep.causeType} />
                 <Field2 k="เวลาซ่อมรวม" v={rep.hrs + " ชม."} />
               </div>
@@ -310,10 +328,10 @@ function RequestDetail({ ctx }) {
               <div className="panel-head" style={{ background: "var(--red-bg,#fff5f5)" }}><div className="h-sm" style={{ color: "var(--red)" }}>ฝ่ายผลิตส่งงานคืน — กรุณาแก้ไขและส่งใหม่</div></div>
               <div className="panel-body stack">
                 {r.prodReason && <div className="small" style={{ color: "var(--red)", marginBottom: 4 }}>เหตุผล: {r.prodReason}</div>}
-                <div className="field"><label>สาเหตุราก (Root Cause)</label>
+                <div className="field"><label>สาเหตุหลัก</label>
                   <textarea className="textarea" style={{ minHeight: 60 }} value={reRoot} onChange={e => setReRoot(e.target.value)} placeholder="ระบุสาเหตุที่แท้จริง..." />
                 </div>
-                <div className="field"><label>วิธีแก้ไข (Corrective Action) <span className="req">*</span></label>
+                <div className="field"><label>วิธีการแก้ปัญหา <span className="req">*</span></label>
                   <textarea className="textarea" style={{ minHeight: 60 }} value={reAction} onChange={e => setReAction(e.target.value)} placeholder="ระบุสิ่งที่ทำการแก้ไข..." />
                 </div>
                 <div className="field" style={{ maxWidth: 160 }}><label>เวลาซ่อมรวม (ชม.)</label>

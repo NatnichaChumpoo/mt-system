@@ -394,6 +394,15 @@ function EditUserModal({ ctx, user, onClose }) {
 
 /* ---------------- EditPartModal ---------------- */
 function EditPartModal({ ctx, part, onClose }) {
+  return (
+    <Modal title={"แก้ไขอะไหล่ — " + part.code} onClose={onClose}>
+      <EditPartFields ctx={ctx} part={part} onDone={onClose} onCancel={onClose} />
+    </Modal>
+  );
+}
+
+/* ---------------- EditPartFields (shared form, no Modal wrapper) ---------------- */
+function EditPartFields({ ctx, part, onDone, onCancel }) {
   const groups = [...new Set(Dd.parts.map(p => p.group))].filter(Boolean);
   const ranks = ["Critical", "Medium", "Low"];
   const [f, setF] = useState({
@@ -419,7 +428,7 @@ function EditPartModal({ ctx, part, onClose }) {
       await DATA.refresh();
       ctx.toast("บันทึก " + part.code + " สำเร็จ", "check");
       window.dispatchEvent(new Event("mt-data-refresh"));
-      onClose();
+      onDone();
     } catch (e) {
       ctx.toast(e.message, "error");
     } finally {
@@ -428,46 +437,44 @@ function EditPartModal({ ctx, part, onClose }) {
   };
 
   return (
-    <Modal title={"แก้ไขอะไหล่ — " + part.code} onClose={onClose}>
-      <div className="col" style={{ gap:14 }}>
-        <div className="grid" style={{ gridTemplateColumns:"1fr 1fr", gap:12 }}>
-          <label className="field-label" style={{ gridColumn:"1/-1" }}>ชื่ออะไหล่ *
-            <input className="input" value={f.name} onChange={e=>set("name",e.target.value)} />
-          </label>
-          <label className="field-label">กลุ่มเครื่องจักร
-            <select className="select" value={f.group} onChange={e=>set("group",e.target.value)}>
-              {groups.map(g=><option key={g}>{g}</option>)}
-            </select>
-          </label>
-          <label className="field-label">Part Rank
-            <select className="select" value={f.partRank} onChange={e=>set("partRank",e.target.value)}>
-              {ranks.map(r=><option key={r}>{r}</option>)}
-            </select>
-          </label>
-          <label className="field-label">Max Stock
-            <input className="input" type="number" min="0" value={f.max} onChange={e=>set("max",e.target.value)} />
-          </label>
-          <label className="field-label">Min Stock
-            <input className="input" type="number" min="0" value={f.min} onChange={e=>set("min",e.target.value)} />
-          </label>
-          <label className="field-label">Safety Stock
-            <input className="input" type="number" min="0" value={f.safety} onChange={e=>set("safety",e.target.value)} />
-          </label>
-          <label className="field-label">ROP (Reorder Point)
-            <input className="input" type="number" min="0" value={f.rop} onChange={e=>set("rop",e.target.value)} />
-          </label>
-          <label className="field-label" style={{ gridColumn:"1/-1" }}>ราคาต่อหน่วย (฿)
-            <input className="input" type="number" min="0" value={f.price} onChange={e=>set("price",e.target.value)} />
-          </label>
-        </div>
-        <div className="row gap-sm" style={{ justifyContent:"flex-end", marginTop:4 }}>
-          <button className="btn" onClick={onClose} disabled={saving}>ยกเลิก</button>
-          <button className="btn btn-primary" onClick={submit} disabled={saving}>
-            {saving ? "กำลังบันทึก…" : <><Icon name="check" size={14}/> บันทึก</>}
-          </button>
-        </div>
+    <div className="col" style={{ gap:14 }}>
+      <div className="grid" style={{ gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <label className="field-label" style={{ gridColumn:"1/-1" }}>ชื่ออะไหล่ *
+          <input className="input" value={f.name} onChange={e=>set("name",e.target.value)} />
+        </label>
+        <label className="field-label">กลุ่มเครื่องจักร
+          <select className="select" value={f.group} onChange={e=>set("group",e.target.value)}>
+            {groups.map(g=><option key={g}>{g}</option>)}
+          </select>
+        </label>
+        <label className="field-label">Part Rank
+          <select className="select" value={f.partRank} onChange={e=>set("partRank",e.target.value)}>
+            {ranks.map(r=><option key={r}>{r}</option>)}
+          </select>
+        </label>
+        <label className="field-label">Max Stock
+          <input className="input" type="number" min="0" value={f.max} onChange={e=>set("max",e.target.value)} />
+        </label>
+        <label className="field-label">Min Stock
+          <input className="input" type="number" min="0" value={f.min} onChange={e=>set("min",e.target.value)} />
+        </label>
+        <label className="field-label">Safety Stock
+          <input className="input" type="number" min="0" value={f.safety} onChange={e=>set("safety",e.target.value)} />
+        </label>
+        <label className="field-label">ROP (Reorder Point)
+          <input className="input" type="number" min="0" value={f.rop} onChange={e=>set("rop",e.target.value)} />
+        </label>
+        <label className="field-label" style={{ gridColumn:"1/-1" }}>ราคาต่อหน่วย (฿)
+          <input className="input" type="number" min="0" value={f.price} onChange={e=>set("price",e.target.value)} />
+        </label>
       </div>
-    </Modal>
+      <div className="row gap-sm" style={{ justifyContent:"flex-end", marginTop:4 }}>
+        <button className="btn" onClick={onCancel} disabled={saving}>ยกเลิก</button>
+        <button className="btn btn-primary" onClick={submit} disabled={saving}>
+          {saving ? "กำลังบันทึก…" : <><Icon name="check" size={14}/> บันทึก</>}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -557,6 +564,7 @@ function AddMachineModal({ ctx, onClose }) {
 function Admin({ ctx }) {
   const [tab, setTab] = useState("machines");
   const [qr, setQr] = useState(null);
+  const [testingQr, setTestingQr] = useState(false);
   const [addingMachine, setAddingMachine] = useState(false);
   const [editingMachine, setEditingMachine] = useState(null);
   const [addingPart, setAddingPart] = useState(false);
@@ -583,10 +591,16 @@ function Admin({ ctx }) {
       {editingPart && <EditPartModal ctx={ctx} part={editingPart} onClose={()=>setEditingPart(null)} />}
       {addingUser && <AddUserModal ctx={ctx} onClose={()=>setAddingUser(false)} />}
       {editingUser && <EditUserModal ctx={ctx} user={editingUser} onClose={()=>setEditingUser(null)} />}
+      {testingQr && <TestQRModal onClose={()=>setTestingQr(false)} />}
 
       {tab==="machines" && (
         <div className="panel">
-          <div className="panel-head"><div className="h-sm">เครื่องจักร ({Dd.machines.length})</div><button className="btn btn-sm btn-primary" onClick={()=>setAddingMachine(true)}><Icon name="plus" size={14}/> เพิ่มเครื่อง</button></div>
+          <div className="panel-head"><div className="h-sm">เครื่องจักร ({Dd.machines.length})</div>
+            <div className="row gap-sm">
+              <button className="btn btn-sm" onClick={()=>setTestingQr(true)}><Icon name="qr" size={14}/> ทดสอบ QR</button>
+              <button className="btn btn-sm btn-primary" onClick={()=>setAddingMachine(true)}><Icon name="plus" size={14}/> เพิ่มเครื่อง</button>
+            </div>
+          </div>
           <div className="table-wrap">
             <table className="tbl">
               <thead><tr><th>รหัส</th><th>ชื่อ</th><th>กลุ่ม</th><th>Rank</th><th>แผนก</th><th>ผู้ผลิต/รุ่น</th><th>สถานะ</th><th>QR Code</th><th></th></tr></thead>
@@ -698,6 +712,70 @@ function Admin({ ctx }) {
         );
       })()}
     </div>
+  );
+}
+
+/* ---------------- ทดสอบ QR Code (อัปโหลดรูป → ตรวจสอบลิงก์/เครื่องจักร) ---------------- */
+function TestQRModal({ onClose }) {
+  const [imgSrc, setImgSrc] = useState(null);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const handleFile = (file) => {
+    setError(null); setResult(null); setImgSrc(null);
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImgSrc(e.target.result);
+      const img = new Image();
+      img.onload = () => {
+        if (typeof jsQR === "undefined") { setError("ไม่พบไลบรารีอ่าน QR (jsQR)"); return; }
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const c2d = canvas.getContext("2d");
+        c2d.drawImage(img, 0, 0);
+        const imageData = c2d.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height);
+        if (code && code.data) setResult(code.data);
+        else setError("ไม่พบ QR Code ในรูปภาพนี้ ลองใช้รูปที่คมชัดกว่านี้");
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  let mc = null;
+  if (result) {
+    try { mc = new URL(result).searchParams.get("mc"); } catch {}
+  }
+  const machine = mc ? Dd.machineByCode(mc) : null;
+
+  return (
+    <Modal title="ทดสอบ QR Code" onClose={onClose}>
+      <div className="stack">
+        <div className="small muted">อัปโหลดรูปภาพ QR Code (เช่น ไฟล์ที่ดาวน์โหลดไว้ หรือรูปถ่าย QR ที่ติดหน้าเครื่อง) เพื่อตรวจสอบว่าลิงก์ที่เข้ารหัสไว้ถูกต้องและพาไปหน้าเครื่องจักรที่ถูกต้องหรือไม่</div>
+        <input className="input" type="file" accept="image/*" onChange={e=>handleFile(e.target.files[0])} />
+        {imgSrc && <img src={imgSrc} alt="QR ที่อัปโหลด" style={{ width:160, height:160, objectFit:"contain", border:"1px solid var(--border)", borderRadius:8, alignSelf:"center" }} />}
+        {error && <div className="small" style={{ color:"var(--red-ink)" }}><Icon name="alert" size={14}/> {error}</div>}
+        {result &&
+          <div className="card card-pad" style={{ background:"var(--surface-2)" }}>
+            <div className="tiny muted">ลิงก์ที่อ่านได้จาก QR</div>
+            <div className="mono tiny" style={{ wordBreak:"break-all", marginTop:4 }}>{result}</div>
+            <div style={{ marginTop:10 }}>
+              {machine
+                ? <div className="small" style={{ color:"var(--green-ink)" }}><Icon name="check" size={14}/> ถูกต้อง — ลิงก์นี้จะพาไปหน้าเครื่องจักร <strong>{machine.code} — {machine.name}</strong></div>
+                : mc
+                  ? <div className="small" style={{ color:"var(--red-ink)" }}><Icon name="alert" size={14}/> ไม่พบเครื่องจักรรหัส "{mc}" ในระบบ</div>
+                  : <div className="small" style={{ color:"var(--red-ink)" }}><Icon name="alert" size={14}/> ลิงก์นี้ไม่ใช่ลิงก์ QR เครื่องจักรของระบบ (ไม่มีพารามิเตอร์ mc)</div>}
+            </div>
+          </div>}
+        {result &&
+          <button className="btn btn-primary btn-block" onClick={()=>window.open(result, "_blank")}>
+            <Icon name="qr" size={15}/> เปิดลิงก์นี้ (จำลองการสแกน)
+          </button>}
+      </div>
+    </Modal>
   );
 }
 

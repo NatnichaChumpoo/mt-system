@@ -39,14 +39,55 @@
     return                                { decision: "Rejected", cls: "b-red",   icon: "x",     th: "ไม่อนุมัติโดยฝ่ายผลิต",  en: "Rejected by Production",   dot: "var(--red)",   reason: d.reason };
   };
 
-  /* ---------- static / presentational ---------- */
-  DATA.kpi = [
-    { key:"MTBF", name:"MTBF", full:"Mean Time Between Failures", value:"420", unit:"ชม.", target:"เพิ่มขึ้น 20%", state:"good", delta:"+18%", trend:"up", note:"Total Running Hrs / Breakdowns" },
-    { key:"MTTR", name:"MTTR", full:"Mean Time To Repair", value:"1.38", unit:"ชม.", target:"ลดลง 30%", state:"good", delta:"−24%", trend:"down", note:"Total Repair Hrs / Breakdowns" },
-    { key:"BRK", name:"Breakdown Rate", full:"จำนวนครั้งที่เสีย/เดือน", value:"4", unit:"ครั้ง/เดือน", target:"ลดลง 50%", state:"warn", delta:"−12%", trend:"down", note:"Total Breakdown Incidents" },
-    { key:"DOWN", name:"Total Downtime", full:"เวลาเครื่องหยุดรวม", value:"2.75", unit:"ชม.", target:"ให้ต่ำที่สุด", state:"good", delta:"−0.9h", trend:"down", note:"Sum of all downtime" },
-    { key:"PM", name:"PM Compliance", full:"ความสอดคล้องแผน PM", value:"80", unit:"%", target:"> 95%", state:"bad", delta:"15% ต่ำกว่าเป้า", trend:"flat", note:"Completed PM / Planned PM" },
-  ];
+  /* ---------- KPI: คำนวณจริงจาก requests/pm (30 วันล่าสุด เทียบกับ 30 วันก่อนหน้า) ---------- */
+  DATA.computeKpis = () => {
+    const DAY = 86400000;
+    const now = Date.now();
+    const machines = (DATA.machines || []).length || 1;
+
+    const stats = (fromDaysAgo, toDaysAgo) => {
+      const from = now - fromDaysAgo * DAY;
+      const to = now - toDaysAgo * DAY;
+      const reqs = (DATA.requests || []).filter((r) => {
+        const t = new Date(r.date).getTime();
+        return t > from && t <= to;
+      });
+      const finished = reqs.filter((r) => r.downtime != null);
+      const totalDown = finished.reduce((s, r) => s + Number(r.downtime || 0), 0);
+      const breakdowns = reqs.length;
+      const periodHrs = (fromDaysAgo - toDaysAgo) * 24 * machines;
+      return {
+        mtbf: breakdowns ? (periodHrs - totalDown) / breakdowns : periodHrs,
+        mttr: finished.length ? totalDown / finished.length : 0,
+        breakdowns, totalDown,
+      };
+    };
+
+    const cur = stats(30, 0);
+    const prev = stats(60, 30);
+
+    const delta = (c, p) => {
+      if (!p) return { delta: "–", trend: "flat" };
+      const pct = ((c - p) / p) * 100;
+      const trend = pct > 1 ? "up" : pct < -1 ? "down" : "flat";
+      return { delta: (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%", trend };
+    };
+    const dMtbf = delta(cur.mtbf, prev.mtbf);
+    const dMttr = delta(cur.mttr, prev.mttr);
+    const dBrk  = delta(cur.breakdowns, prev.breakdowns);
+    const dDown = delta(cur.totalDown, prev.totalDown);
+
+    const pmList = DATA.pm || [];
+    const pmPct = pmList.length ? Math.round(pmList.filter((p) => p.status === "Completed").length / pmList.length * 100) : 0;
+
+    DATA.kpi = [
+      { key:"MTBF", name:"MTBF", full:"Mean Time Between Failures", value:cur.mtbf.toFixed(0), unit:"ชม.", target:"เพิ่มขึ้น", state: cur.mtbf>=300?"good":cur.mtbf>=150?"warn":"bad", delta:dMtbf.delta, trend:dMtbf.trend, note:"(ชม.เครื่องวิ่งรวม − Downtime) / จำนวนครั้งเสีย (30 วันล่าสุด)" },
+      { key:"MTTR", name:"MTTR", full:"Mean Time To Repair", value:cur.mttr.toFixed(2), unit:"ชม.", target:"ลดลง", state: cur.mttr<=2?"good":cur.mttr<=4?"warn":"bad", delta:dMttr.delta, trend:dMttr.trend, note:"Downtime เฉลี่ยต่อใบแจ้งซ่อมที่ปิดงานแล้ว (30 วันล่าสุด)" },
+      { key:"BRK", name:"Breakdown Rate", full:"จำนวนครั้งที่เสีย/เดือน", value:String(cur.breakdowns), unit:"ครั้ง/เดือน", target:"ลดลง", state: cur.breakdowns<=3?"good":cur.breakdowns<=6?"warn":"bad", delta:dBrk.delta, trend:dBrk.trend, note:"จำนวนใบแจ้งซ่อมใหม่ใน 30 วันล่าสุด" },
+      { key:"DOWN", name:"Total Downtime", full:"เวลาเครื่องหยุดรวม", value:cur.totalDown.toFixed(2), unit:"ชม.", target:"ให้ต่ำที่สุด", state: cur.totalDown<=10?"good":cur.totalDown<=24?"warn":"bad", delta:dDown.delta, trend:dDown.trend, note:"รวม Downtime ของใบแจ้งซ่อมที่ปิดงานแล้ว (30 วันล่าสุด)" },
+      { key:"PM", name:"PM Compliance", full:"ความสอดคล้องแผน PM", value:String(pmPct), unit:"%", target:"> 95%", state: pmPct>=95?"good":pmPct>=80?"warn":"bad", delta:"–", trend:"flat", note:"Completed PM / Planned PM ทั้งหมด" },
+    ];
+  };
   DATA.riskMatrix = [
     { rank:"Rank A", sub:"High Impact MC", crit:"Critical Part", zone:"HIGH", proto:"Telegram Alert ทันที + แจ้งหัวหน้า (Email)" },
     { rank:"Rank A", sub:"High Impact MC", crit:"Medium / Low", zone:"HIGH", proto:"Telegram Alert ทันที ถึงทีมช่าง" },
@@ -63,12 +104,44 @@
     { group:"CNC", machines:4, parts:90, value:780000, critical:18, reorder:5, risk:"MEDIUM" },
     { group:"Utility", machines:10, parts:150, value:220000, critical:5, reorder:1, risk:"LOW" },
   ];
-  DATA.invKpi = [
-    { name:"Inventory Accuracy", value:96, unit:"%", target:98, state:"warn" },
-    { name:"Critical Part Availability", value:95, unit:"%", target:100, state:"bad" },
-    { name:"Dead Stock Value", value:145000, unit:"฿", target:50000, state:"bad", money:true, lowerBetter:true },
-    { name:"Emergency Purchase", value:8, unit:"%", target:5, state:"warn", lowerBetter:true },
-  ];
+  /* ---------- Inventory KPI: คำนวณจริงจาก parts/stockOut ---------- */
+  DATA.computeInvKpi = () => {
+    const parts = DATA.parts || [];
+    const stockOut = DATA.stockOut || [];
+
+    const stateHigher = (v, target, warnRatio = 0.9) => v >= target ? "good" : v >= target * warnRatio ? "warn" : "bad";
+    const stateLower = (v, target, warnMul = 1.5) => v <= target ? "good" : v <= target * warnMul ? "warn" : "bad";
+
+    // 1) สต็อกอยู่ในเกณฑ์ Min-Max
+    const withRange = parts.filter((p) => p.max > 0);
+    const inRange = withRange.filter((p) => p.cur >= p.min && p.cur <= p.max).length;
+    const accuracyPct = withRange.length ? Math.round((inRange / withRange.length) * 100) : 100;
+
+    // 2) Critical Part Availability: % ของอะไหล่ Critical ที่ยังไม่ของหมด
+    const criticalParts = parts.filter((p) => p.partRank === "Critical");
+    const availableCritical = criticalParts.filter((p) => p.status !== "critical").length;
+    const availPct = criticalParts.length ? Math.round((availableCritical / criticalParts.length) * 100) : 100;
+
+    // 3) Dead Stock Value: มีคงคลัง > 0 แต่ไม่เคยถูกเบิกออกเลย
+    const movedCodes = new Set(stockOut.map((s) => s.code));
+    const deadStockValue = parts
+      .filter((p) => p.cur > 0 && !movedCodes.has(p.code))
+      .reduce((s, p) => s + (p.value || 0), 0);
+
+    // 4) Emergency Purchase: % ของการเบิกฉุกเฉินใน 30 วันล่าสุด
+    const DAY = 86400000;
+    const since = Date.now() - 30 * DAY;
+    const recentOut = stockOut.filter((s) => new Date(s.date).getTime() >= since);
+    const emergencyOut = recentOut.filter((s) => /ฉุกเฉิน|ด่วน|emergency|urgent/i.test(s.reason || ""));
+    const emergencyPct = recentOut.length ? Math.round((emergencyOut.length / recentOut.length) * 100) : 0;
+
+    DATA.invKpi = [
+      { name:"สต็อกอยู่ในเกณฑ์ (Min-Max)", value:accuracyPct, unit:"%", target:95, state:stateHigher(accuracyPct, 95) },
+      { name:"Critical Part Availability", value:availPct, unit:"%", target:100, state:stateHigher(availPct, 100, 0.9) },
+      { name:"Dead Stock Value", value:Math.round(deadStockValue), unit:"฿", target:50000, state:stateLower(deadStockValue, 50000), money:true, lowerBetter:true },
+      { name:"Emergency Purchase", value:emergencyPct, unit:"%", target:5, state:stateLower(emergencyPct, 5, 2), lowerBetter:true },
+    ];
+  };
   DATA.pareto = [
     { name:"PLC Controller", code:"PT-28", count:11 }, { name:"Solenoid Valve", code:"PT-04", count:8 },
     { name:"Heater Element", code:"PT-34", count:6 }, { name:"Hydraulic Pump", code:"PT-01", count:5 },
@@ -110,6 +183,8 @@
       usage:d.usage, pm:d.pm, users:d.users, stockIn:d.stockIn, stockOut:d.stockOut,
       suppliers:d.suppliers, purchaseOrders:d.purchaseOrders, poItems:d.poItems,
     });
+    DATA.computeKpis();
+    DATA.computeInvKpi();
   }
 
   /* ---------- write helpers ---------- */
@@ -221,15 +296,20 @@
   };
   DATA.refresh = load;
 
-  /* ---------- auto-poll: ตรวจสถานะใบแจ้งซ่อมเปลี่ยน ---------- */
+  /* ---------- auto-poll: ตรวจสถานะใบแจ้งซ่อม / คลังอะไหล่เปลี่ยน ---------- */
   const statusSig = () => (DATA.requests || []).map((r) => r.no + ":" + r.status).join("|");
+  const invSig = () => (DATA.parts || []).map((p) => p.code + ":" + p.cur).join("|")
+    + "#" + (DATA.stockIn || []).length + "#" + (DATA.stockOut || []).length + "#" + (DATA.purchaseOrders || []).length;
   let lastSig = "";
+  let lastInvSig = "";
   async function pollOnce() {
     try {
       await load();
       const s = statusSig();
-      if (s !== lastSig) {
+      const inv = invSig();
+      if (s !== lastSig || inv !== lastInvSig) {
         lastSig = s;
+        lastInvSig = inv;
         window.dispatchEvent(new Event("mt-data-refresh"));
       }
     } catch (e) { /* เงียบไว้ ไม่รบกวนผู้ใช้ */ }
@@ -240,6 +320,7 @@
   load()
     .then(() => {
       lastSig = statusSig();
+      lastInvSig = invSig();
       window.__MT_READY = true;
       window.dispatchEvent(new Event("mt-data-ready"));
       setInterval(pollOnce, POLL_MS);

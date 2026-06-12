@@ -11,8 +11,10 @@ const API = `https://api.telegram.org/bot${TOKEN}`;
 const SEND_MS = Number(process.env.WORKER_SEND_MS || 5000);
 
 // ---------- pure helpers (มี selftest) ----------
-export function resolveChatId(recipient, envChat) {
-  return recipient && recipient !== "TEAM_CHAT" ? recipient : envChat;
+export function resolveChatId(recipient, chatMap) {
+  return recipient && Object.prototype.hasOwnProperty.call(chatMap || {}, recipient)
+    ? chatMap[recipient]
+    : recipient;
 }
 export function parseCallback(data) {
   if (!data) return null;
@@ -54,6 +56,11 @@ async function tg(method, payload) {
 }
 
 // ---------- (1) ส่งข้อความค้าง ----------
+const CHAT_MAP = {
+  TEAM_CHAT: process.env.TELEGRAM_TEAM_CHAT,
+  STORE_CHAT: process.env.TELEGRAM_STORE_CHAT,
+};
+
 async function sendPending() {
   const rows = await q(
     `SELECT id, recipient, subject, message, related_request_id
@@ -62,9 +69,9 @@ async function sendPending() {
      ORDER BY created_at LIMIT 20`
   );
   for (const row of rows) {
-    const chatId = resolveChatId(row.recipient, process.env.TELEGRAM_TEAM_CHAT);
+    const chatId = resolveChatId(row.recipient, CHAT_MAP);
     try {
-      if (!chatId) throw new Error("no chat id (set TELEGRAM_TEAM_CHAT)");
+      if (!chatId) throw new Error(`no chat id for recipient "${row.recipient}" (set TELEGRAM_TEAM_CHAT / TELEGRAM_STORE_CHAT)`);
       await tg("sendMessage", buildSendBody(row, chatId));
       await q(`UPDATE notification_log SET status='sent', sent_at=NOW() WHERE id=?`, [row.id]);
       console.log("[send] ok id", row.id, "->", chatId);
@@ -153,8 +160,9 @@ async function main() {
 
 // ---------- selftest (ไม่ใช้เน็ต/DB) ----------
 if (process.argv.includes("--selftest")) {
-  const a = resolveChatId("TEAM_CHAT", "-100123") === "-100123";
-  const b = resolveChatId("-555", "-100") === "-555";
+  const a = resolveChatId("TEAM_CHAT", { TEAM_CHAT: "-100123", STORE_CHAT: "-100456" }) === "-100123";
+  const b = resolveChatId("STORE_CHAT", { TEAM_CHAT: "-100123", STORE_CHAT: "-100456" }) === "-100456";
+  const b2 = resolveChatId("-555", { TEAM_CHAT: "-100123" }) === "-555";
   const c = JSON.stringify(parseCallback("accept:abc-123-xyz")) === JSON.stringify({ action: "accept", id: "abc-123-xyz" });
   const d = parseCallback("nope") === null;
   const nameA = resolveAcceptName({ first_name: "Somchai", last_name: "K." }) === "Somchai K.";
@@ -162,8 +170,8 @@ if (process.argv.includes("--selftest")) {
   const body = buildSendBody({ message: "hi", related_request_id: "R-1" }, "-100");
   const e = body.reply_markup.inline_keyboard[0][0].callback_data === "accept:R-1";
   const f = !buildSendBody({ message: "x" }, "-100").reply_markup; // ไม่มีปุ่มถ้าไม่มี request
-  console.log("selftest:", { resolveTeam: a, resolveDirect: b, parse: c, parseBad: d, nameFull: nameA, nameUser: nameB, button: e, noButton: f });
-  process.exit(a && b && c && d && nameA && nameB && e && f ? 0 : 1);
+  console.log("selftest:", { resolveTeam: a, resolveStore: b, resolveDirect: b2, parse: c, parseBad: d, nameFull: nameA, nameUser: nameB, button: e, noButton: f });
+  process.exit(a && b && b2 && c && d && nameA && nameB && e && f ? 0 : 1);
 }
 
 main();

@@ -412,8 +412,8 @@ app.put("/api/requests/:no/prodapprove", async (req, res) => {
       const msg = `❌ <b>PD ส่งงานคืน</b> — ${no}\nเหตุผล: ${reason || "ไม่ระบุ"}\nกรุณาดำเนินการซ่อมและบันทึกผลใหม่อีกครั้ง`;
       await conn.query(
         `INSERT INTO notification_log (channel, recipient, subject, message, related_request_id, status)
-         VALUES ('telegram', 'TEAM_CHAT', ?, ?, ?, 'pending')`,
-        [`PD ส่งงานคืน ${no}`, msg, r.id]
+         VALUES ('telegram', 'TEAM_CHAT', ?, ?, NULL, 'pending')`,
+        [`PD ส่งงานคืน ${no}`, msg]
       );
     }
     await conn.commit();
