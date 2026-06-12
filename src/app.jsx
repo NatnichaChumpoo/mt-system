@@ -81,12 +81,15 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-  const [screen, setScreen] = uS("login");
-  const [params, setParams] = uS({});
+  /* อ่าน ?mc= จาก URL เมื่อสแกน QR */
+  const initialMC = new URLSearchParams(window.location.search).get("mc") || null;
+  const [screen, setScreen] = uS(() => initialMC ? "m_machine" : "login");
+  const [params, setParams] = uS(() => initialMC ? { mc: initialMC } : {});
   const [role, setRole] = uS("Operator");
   const [stack, setStack] = uS([]);
-  /* อ่าน ?mc= จาก URL เมื่อสแกน QR */
-  const [pendingMC] = uS(() => new URLSearchParams(window.location.search).get("mc") || null);
+  const [pendingMC, setPendingMC] = uS(initialMC);
+  /* guest: เข้ามาจากสแกน QR โดยตรง ยังไม่ได้ login */
+  const [guest, setGuest] = uS(() => !!initialMC);
   const [toast, setToast] = uS(null);
   const [roleMenu, setRoleMenu] = uS(false);
   /* live update: re-render เมื่อ api-bridge แจ้งว่าสถานะเปลี่ยน (คงหน้าจอเดิม) */
@@ -96,8 +99,15 @@ function App() {
     window.addEventListener("mt-data-refresh", h);
     return () => window.removeEventListener("mt-data-refresh", h);
   }, []);
+  /* ลบ ?mc= ออกจาก URL หลังอ่านค่าแล้ว เพื่อไม่ให้ reload ซ้ำกลับมาที่ guest mode */
+  uE(() => {
+    if (initialMC) window.history.replaceState({}, "", window.location.pathname);
+  }, []);
   const isMobile = useIsMobile(860);
   const [drawer, setDrawer] = uS(false);
+  const [navCollapsed, setNavCollapsed] = uS(() => typeof localStorage !== "undefined" && localStorage.getItem("mt_nav_collapsed") === "1");
+  uE(() => { try { localStorage.setItem("mt_nav_collapsed", navCollapsed ? "1" : "0"); } catch {} }, [navCollapsed]);
+  const collapsed = !isMobile && navCollapsed;
   /* close the drawer whenever we navigate or switch role */
   uE(() => {setDrawer(false);}, [screen, role]);
 
@@ -125,8 +135,9 @@ function App() {
   };
   const switchRole = (r) => {setRole(r);setScreen(NAV[r].home);setParams({});setStack([]);setRoleMenu(false);};
   const logout = () => {setScreen("login");setStack([]);setRoleMenu(false);};
+  const exitGuest = () => {setGuest(false);setPendingMC(null);setScreen("login");setParams({});setStack([]);};
 
-  const ctx = { go, back, login, role, params, toast: showToast, pendingMC };
+  const ctx = { go, back, login, role, params, toast: showToast, pendingMC, guest, exitGuest };
   const meta = SCREENS[screen] || SCREENS.login;
   const Comp = meta.comp;
   const user = userOf(role);
@@ -172,24 +183,30 @@ function App() {
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
       {/* backdrop for mobile drawer */}
-      {isMobile && drawer &&
+      {isMobile && drawer && !guest &&
       <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, background: "rgba(16,28,40,.42)", zIndex: 55, backdropFilter: "blur(1px)" }}></div>
       }
-      {/* sidebar — white premium (drawer on mobile) */}
+      {/* sidebar — white premium (drawer on mobile), hidden for guest (scanned-QR, ยังไม่ login) */}
+      {!guest &&
       <aside className="no-print" style={isMobile ?
       { width: 280, maxWidth: "84vw", flex: "none", background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, bottom: 0, height: "100vh", zIndex: 60, transform: drawer ? "translateX(0)" : "translateX(-102%)", transition: "transform .26s cubic-bezier(.4,0,.2,1)", boxShadow: drawer ? "var(--sh-3)" : "none" } :
-      { width: 256, flex: "none", background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh" }}>
-        <div style={{ padding: "22px 20px 20px", display: "flex", alignItems: "center", gap: 12, borderBottom: "1px solid var(--border)" }}>
+      { width: collapsed ? 76 : 256, flex: "none", background: "var(--surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", transition: "width .18s ease" }}>
+        <div style={{ padding: collapsed ? "18px 8px" : "22px 20px 20px", display: "flex", alignItems: "center", gap: 12, justifyContent: collapsed ? "center" : "flex-start", borderBottom: "1px solid var(--border)" }}>
           <span style={{ width: 42, height: 42, borderRadius: 12, background: "var(--navy)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="wrench" size={21} /></span>
-          <div>
+          {!collapsed && <div>
             <div className="h-md" style={{ lineHeight: 1.1, fontSize: "15px" }}>Maintenance System</div>
             <div className="tiny" style={{ color: "var(--ink-3)", letterSpacing: ".04em", marginTop: 1, fontSize: "10px" }}>Machine Maintenance Console</div>
-          </div>
+          </div>}
         </div>
-        <nav style={{ flex: 1, overflowY: "auto", padding: "18px 14px" }}>
+        {!isMobile &&
+        <button className="icon-btn" onClick={() => setNavCollapsed((c) => !c)} title={collapsed ? "ขยายเมนู" : "ย่อเมนู"} aria-label={collapsed ? "ขยายเมนู" : "ย่อเมนู"} style={{ alignSelf: collapsed ? "center" : "flex-end", margin: collapsed ? "8px 0 0" : "8px 10px 0 0" }}>
+          <Icon name={collapsed ? "chevR" : "chevL"} size={15} />
+        </button>
+        }
+        <nav style={{ flex: 1, overflowY: "auto", padding: collapsed ? "10px 8px" : "18px 14px" }}>
           {nav.menu.map(([section, items]) =>
           <div key={section} style={{ marginBottom: 22 }}>
-              <div className="eyebrow" style={{ padding: "0 12px 10px", fontSize: 10.5 }}>{section}</div>
+              {!collapsed && <div className="eyebrow" style={{ padding: "0 12px 10px", fontSize: 10.5 }}>{section}</div>}
               {items.map(([s, l, ic]) => {
               const active = screen === s ||
               s === "d_prodverify" && screen === "d_detail" && role === "Production" ||
@@ -199,14 +216,14 @@ function App() {
               s === "m_queue" && screen === "m_repair" ||
               s === "m_requests" && screen === "m_detail";
               return (
-                <button key={s} onClick={() => {setStack([]);setScreen(s);setParams({});}} style={{
-                  width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", marginBottom: 3, borderRadius: 10, cursor: "pointer", textAlign: "left",
+                <button key={s} title={collapsed ? l : undefined} onClick={() => {setStack([]);setScreen(s);setParams({});}} style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: collapsed ? 0 : 12, padding: collapsed ? "11px 0" : "11px 12px", justifyContent: collapsed ? "center" : "flex-start", marginBottom: 3, borderRadius: 10, cursor: "pointer", textAlign: "left",
                   border: 0, position: "relative",
                   background: active ? "var(--accent-bg)" : "transparent",
                   color: active ? "var(--ink)" : "var(--ink-2)", fontWeight: active ? 700 : 500, fontSize: 14 }}>
                     {active && <span style={{ position: "absolute", left: 0, top: 9, bottom: 9, width: 3, borderRadius: 3, background: "var(--accent)" }}></span>}
-                    <Icon name={ic} size={18} style={{ color: active ? "var(--accent)" : "var(--ink-3)" }} /> {l}
-                    {s === "d_prodverify" && (() => { const n = (DATA.requests||[]).filter(r => (r.status==="Completed"||r.status==="Resubmitted") && !r.prodDecision).length; return n > 0 ? <span style={{ marginLeft:"auto", background:"var(--red)", color:"#fff", borderRadius:99, fontSize:11, fontWeight:700, padding:"1px 7px", minWidth:20, textAlign:"center" }}>{n}</span> : null; })()}
+                    <Icon name={ic} size={18} style={{ color: active ? "var(--accent)" : "var(--ink-3)" }} /> {!collapsed && l}
+                    {!collapsed && s === "d_prodverify" && (() => { const n = (DATA.requests||[]).filter(r => (r.status==="Completed"||r.status==="Resubmitted") && !r.prodDecision).length; return n > 0 ? <span style={{ marginLeft:"auto", background:"var(--red)", color:"#fff", borderRadius:99, fontSize:11, fontWeight:700, padding:"1px 7px", minWidth:20, textAlign:"center" }}>{n}</span> : null; })()}
                   </button>);
 
             })}
@@ -214,27 +231,32 @@ function App() {
           )}
         </nav>
         <div style={{ padding: "14px", borderTop: "1px solid var(--border)" }}>
-          <div className="eyebrow" style={{ padding: "0 4px 9px", fontSize: 10 }}>เข้าสู่ระบบ</div>
-          <button className="row between" onClick={() => setRoleMenu((m) => !m)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 11, padding: "9px 11px", color: "var(--ink)", cursor: "pointer" }}>
-            <span className="row gap-sm"><span className="avatar" style={{ width: 30, height: 30 }}>{user.short}</span><span style={{ textAlign: "left" }}><span style={{ display: "block", fontSize: 13, fontWeight: 700 }}>{user.name}</span><span className="tiny" style={{ display: "block", color: "var(--ink-3)" }}>{role}</span></span></span>
-            <Icon name="chevD" size={14} style={{ color: "var(--ink-3)" }} />
+          {!collapsed && <div className="eyebrow" style={{ padding: "0 4px 9px", fontSize: 10 }}>เข้าสู่ระบบ</div>}
+          <button className="row between" title={collapsed ? user.name + " · " + role : undefined} onClick={() => setRoleMenu((m) => !m)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 11, padding: collapsed ? "9px 0" : "9px 11px", color: "var(--ink)", cursor: "pointer", justifyContent: collapsed ? "center" : "space-between" }}>
+            <span className="row gap-sm" style={{ justifyContent: collapsed ? "center" : "flex-start" }}><span className="avatar" style={{ width: 30, height: 30 }}>{user.short}</span>{!collapsed && <span style={{ textAlign: "left" }}><span style={{ display: "block", fontSize: 13, fontWeight: 700 }}>{user.name}</span><span className="tiny" style={{ display: "block", color: "var(--ink-3)" }}>{role}</span></span>}</span>
+            {!collapsed && <Icon name="chevD" size={14} style={{ color: "var(--ink-3)" }} />}
           </button>
         </div>
       </aside>
+      }
 
       {/* main */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <header className="no-print" style={{ height: 64, flex: "none", background: "rgba(255,255,255,.82)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "0 14px" : "0 28px", position: "sticky", top: 0, zIndex: 30 }}>
           <div className="row gap-sm" style={{ minWidth: 0 }}>
-            {isMobile &&
+            {isMobile && !guest &&
             <button className="icon-btn" onClick={() => setDrawer(true)} aria-label="เมนู"><Icon name="menu" size={20} /></button>
             }
-            <span className="eyebrow" style={{ whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => { setStack([]); setScreen(nav.home); setParams({}); }}>{labelOf(role)}</span>
+            <span className="eyebrow" style={{ whiteSpace: "nowrap", cursor: guest ? "default" : "pointer" }} onClick={guest ? undefined : () => { setStack([]); setScreen(nav.home); setParams({}); }}>{guest ? "สแกน QR" : labelOf(role)}</span>
             {!isMobile && <span style={{ color: "var(--ink-3)" }}>/</span>}
             {!isMobile && <span className="small" style={{ fontWeight: 600 }}>{screenTitle(screen, meta)}</span>}
           </div>
           <div className="row gap-sm">
-            <RoleSwitch />
+            {guest ?
+            <button className="row gap-sm" onClick={exitGuest} style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 11, padding: "8px 14px", color: "var(--ink)", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+              <Icon name="user" size={16} /> เข้าสู่ระบบ (สำหรับพนักงาน)
+            </button> :
+            <RoleSwitch />}
           </div>
         </header>
 

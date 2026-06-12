@@ -106,6 +106,7 @@ function MachineScreen({ ctx }) {
       <Icon name="alert" size={28} style={{ color: "var(--red)" }} />
       <div className="h-sm" style={{ marginTop: 10 }}>ไม่พบข้อมูลเครื่องจักร</div>
       <div className="muted small" style={{ marginTop: 4 }}>รหัส: {ctx.params.mc || Dm.scannedMachine}</div>
+      {ctx.guest && <button className="btn" style={{ marginTop: 16 }} onClick={ctx.exitGuest}><Icon name="user" size={15} /> เข้าสู่ระบบ</button>}
     </div>
   );
   const running = mc.status === "Running";
@@ -237,7 +238,7 @@ function LowPartForm({ ctx }) {
           </div>
           <div className="field" style={{ marginBottom: 0 }}>
             <label>ผู้แจ้ง</label>
-            <input className="input" defaultValue="Somchai K." />
+            <input className="input" defaultValue={ctx.guest ? "" : (Dm.roleUser?.[ctx.role]?.name || "")} placeholder="ระบุชื่อผู้แจ้ง" />
           </div>
         </div>
 
@@ -308,7 +309,7 @@ function ReportForm({ ctx }) {
   const [type, setType] = useState("งานซ่อม");
   const [sev, setSev] = useState("High");
   const [desc, setDesc] = useState("");
-  const [reporter, setReporter] = useState("Somchai K.");
+  const [reporter, setReporter] = useState(() => ctx.guest ? "" : (Dm.roleUser?.[ctx.role]?.name || ""));
   const [submitting, setSubmitting] = useState(false);
   const sevs = [["Low", "Low"], ["Medium", "Medium"], ["High", "High"], ["Critical", "Critical"]];
 
@@ -328,14 +329,14 @@ function ReportForm({ ctx }) {
         const result = await window.DATA.createRequest({ machineCode: mc.code, problem: desc.trim(), priority: sev, reporterName: reporter.trim() || null, type });
         if (typeof Dm.refresh === "function") { await Dm.refresh(); window.dispatchEvent(new Event("mt-data-refresh")); }
         ctx.toast("ส่งใบแจ้งซ่อมแล้ว · " + result, "mail");
-        ctx.go("m_requests");
+        ctx.guest ? ctx.go("m_machine", { mc: mc.code }) : ctx.go("m_requests");
       } catch (err) {
         console.error("[report-submit] error", err);
         ctx.toast("ส่งใบแจ้งซ่อมไม่สำเร็จ", "error");
       } finally { setSubmitting(false); }
     } else {
       ctx.toast("ส่งใบแจ้งซ่อมแล้ว · ระบบส่งอีเมลแจ้งทีมช่างและหัวหน้างาน", "mail");
-      ctx.go("m_requests");
+      ctx.guest ? ctx.go("m_machine", { mc: mc.code }) : ctx.go("m_requests");
     }
   };
   return (
@@ -387,7 +388,7 @@ function ReportForm({ ctx }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 }}>
         <div className="field">
           <label>ผู้แจ้ง</label>
-          <input className="input" value={reporter} onChange={(e) => setReporter(e.target.value)} />
+          <input className="input" value={reporter} onChange={(e) => setReporter(e.target.value)} placeholder="ระบุชื่อผู้แจ้ง" />
         </div>
         <div className="field">
           <label>แผนก</label>
@@ -397,7 +398,7 @@ function ReportForm({ ctx }) {
 
       <div className="card card-pad" style={{ background: "var(--blue-bg)", border: "1px solid #c7dbf6", display: "flex", gap: 10, marginBottom: 14 }}>
         <span style={{ color: "var(--blue)" }}><Icon name="mail" size={18} /></span>
-        <div className="small" style={{ color: "var(--blue-ink)" }}>เมื่อส่ง ระบบจะส่งอีเมล/LINE แจ้งทีมช่างและหัวหน้างาน MT โดยอัตโนมัติ</div>
+        <div className="small" style={{ color: "var(--blue-ink)" }}>เมื่อส่ง ระบบจะส่งแจ้งทีม MT ผ่านทาง TELEGRAM โดยอัตโนมัติ</div>
       </div>
 
       <button className="btn btn-primary btn-lg btn-block" onClick={submit} disabled={submitting}>
@@ -555,8 +556,8 @@ function RepairForm({ ctx }) {
         <label>หมวดปัญหา</label>
         <select className="select" value={cat} onChange={(e) => setCat(e.target.value)}>{cats.map((c) => <option key={c}>{c}</option>)}</select>
       </div>
-      <div className="field"><label>สาเหตุราก (Root Cause) <span className="req">*</span></label><textarea className="textarea" style={{ minHeight: 70 }} value={rootInput} onChange={(e) => setRootInput(e.target.value)} placeholder="เช่น O-ring seal degraded causing pressure drop" /></div>
-      <div className="field"><label>วิธีแก้ไข (Corrective Action) <span className="req">*</span></label><textarea className="textarea" style={{ minHeight: 70 }} value={actionInput} onChange={(e) => setActionInput(e.target.value)} placeholder="อธิบายการซ่อมที่ทำ" /></div>
+      <div className="field"><label>สาเหตุหลัก <span className="req">*</span></label><textarea className="textarea" style={{ minHeight: 70 }} value={rootInput} onChange={(e) => setRootInput(e.target.value)} placeholder="เช่น O-ring seal degraded causing pressure drop" /></div>
+      <div className="field"><label>วิธีการแก้ปัญหา <span className="req">*</span></label><textarea className="textarea" style={{ minHeight: 70 }} value={actionInput} onChange={(e) => setActionInput(e.target.value)} placeholder="อธิบายการซ่อมที่ทำ" /></div>
 
       <div className="field">
         <label>ประเภทสาเหตุ</label>
