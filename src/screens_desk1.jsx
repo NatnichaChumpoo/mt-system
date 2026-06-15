@@ -96,7 +96,6 @@ function RequestList({ ctx }) {
   const { sorted, sort, onSort } = useSort(rows, { key: "date", dir: -1 });
 
   const exportXlsx = () => {
-    if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
     const data = sorted.map((r) => ({
       "เลขที่ใบแจ้ง": r.no, "รหัสเครื่อง": r.mc, "ชื่อเครื่อง": r.mcName,
       "อาการ": r.problem, "ความรุนแรง": r.priority, "สถานะ": r.status,
@@ -104,11 +103,7 @@ function RequestList({ ctx }) {
       "ผู้แจ้ง": r.reporter, "แผนก": r.dept,
       "Downtime (ชม.)": r.downtime != null ? r.downtime : "",
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "ใบแจ้งซ่อม");
-    XLSX.writeFile(wb, "ใบแจ้งซ่อม_" + new Date().toISOString().slice(0, 10) + ".xlsx");
-    ctx.toast("ส่งออก " + data.length + " รายการแล้ว", "check");
+    exportRowsToXlsx(ctx, data, "ใบแจ้งซ่อม", "ใบแจ้งซ่อม_" + new Date().toISOString().slice(0, 10) + ".xlsx");
   };
 
   if (creating) return <RequestCreateDesktop ctx={ctx} onBack={() => setCreating(false)} />;

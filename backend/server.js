@@ -332,7 +332,12 @@ app.delete("/api/requests/:requestNo", async (req, res) => {
       return res.status(404).json({ error: "request not found" });
     }
 
-    await conn.query(`DELETE FROM notification_log WHERE related_request_id = ?`, [requestRow.id]);
+    // PD-reject notifications insert related_request_id=NULL (to hide the "รับงาน" button),
+    // so clean those up by matching the request_no embedded in their subject.
+    await conn.query(
+      `DELETE FROM notification_log WHERE related_request_id = ? OR (related_request_id IS NULL AND subject LIKE CONCAT('%', ?, '%'))`,
+      [requestRow.id, requestNo]
+    );
     await conn.query(`DELETE FROM maintenance_requests WHERE id = ?`, [requestRow.id]);
 
     await conn.commit();

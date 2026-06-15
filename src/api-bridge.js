@@ -67,7 +67,10 @@
     const prev = stats(60, 30);
 
     const delta = (c, p) => {
-      if (!p) return { delta: "–", trend: "flat" };
+      if (!p) {
+        if (!c) return { delta: "–", trend: "flat" };
+        return { delta: "ใหม่", trend: "up" };
+      }
       const pct = ((c - p) / p) * 100;
       const trend = pct > 1 ? "up" : pct < -1 ? "down" : "flat";
       return { delta: (pct >= 0 ? "+" : "") + pct.toFixed(0) + "%", trend };

@@ -25,19 +25,13 @@ function MasterData({ ctx }) {
     reorder: Ds.parts.filter(p=>p.status==="reorder").length,
     normal: Ds.parts.filter(p=>p.status==="normal").length,
   };
-  const statusLabel = { critical:"ของหมด", reorder:"ควรสั่งซื้อ", normal:"ปกติ" };
   const exportXlsx = () => {
-    if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
     const data = sorted.map(p => ({
       "Part Code": p.code, "ชื่ออะไหล่": p.name, "กลุ่ม": p.group, "Part Rank": p.partRank,
       "Max": p.max, "Min": p.min, "Safety": p.safety, "ROP": p.rop, "คงคลัง": p.cur,
-      "สถานะ": statusLabel[p.status] || p.status, "มูลค่า": p.value, "Lead Time (วัน)": p.leadTime,
+      "สถานะ": (STOCK_BADGE[p.status] || STOCK_BADGE.normal).label, "มูลค่า": p.value, "Lead Time (วัน)": p.leadTime,
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Master Data");
-    XLSX.writeFile(wb, "คลังอะไหล่_" + new Date().toISOString().slice(0,10) + ".xlsx");
-    ctx.toast("ส่งออก "+data.length+" รายการแล้ว", "check");
+    exportRowsToXlsx(ctx, data, "Master Data", "คลังอะไหล่_" + new Date().toISOString().slice(0,10) + ".xlsx");
   };
   return (
     <div>
@@ -136,7 +130,6 @@ function DetailField({ label, value, mono }) {
 }
 
 function PartDetailBody({ part, onEdit, onHistory }) {
-  const statusLabel = { critical:"ของหมด", reorder:"ควรสั่งซื้อ", normal:"ปกติ" };
   return (
     <div className="stack">
       <div className="row between" style={{alignItems:"flex-start"}}>
@@ -159,7 +152,7 @@ function PartDetailBody({ part, onEdit, onHistory }) {
         <DetailField label="Safety Stock" value={part.safety} mono/>
         <DetailField label="ROP" value={part.rop} mono/>
         <DetailField label="Lead Time" value={part.leadTime+" วัน"}/>
-        <DetailField label="สถานะ" value={statusLabel[part.status]||part.status}/>
+        <DetailField label="สถานะ" value={(STOCK_BADGE[part.status]||STOCK_BADGE.normal).label}/>
       </div>
       <div className="row gap-sm" style={{justifyContent:"flex-end", marginTop:4}}>
         <button className="btn" onClick={onHistory}><Icon name="clock" size={15}/> ดูประวัติ</button>
@@ -384,36 +377,38 @@ function ReorderList({ ctx }) {
   const selRows = sorted.filter(p=>sel.has(p.code));
   const estCost = selRows.reduce((s,p)=>s + p.price*p.suggest, 0);
   const exportPOExcel = () => {
-    if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
     const rowsToExport = selRows.length > 0 ? selRows : sorted;
-    if (rowsToExport.length === 0) { ctx.toast("ไม่มีรายการให้ส่งออก", "error"); return; }
     const data = rowsToExport.map(p => ({
       "Part Code": p.code, "ชื่ออะไหล่": p.name, "กลุ่ม": p.group, "แบรนด์": p.brand,
       "คงคลัง": p.cur, "ROP": p.rop, "ควรสั่ง": p.suggest,
       "ราคา/หน่วย": p.price, "มูลค่ารวม": p.price * p.suggest, "Lead Time (วัน)": p.leadTime,
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "ใบสั่งซื้อ");
-    XLSX.writeFile(wb, "ใบสั่งซื้อ_" + new Date().toISOString().slice(0,10) + ".xlsx");
-    ctx.toast("ส่งออกใบสั่งซื้อ "+data.length+" รายการแล้ว", "check");
-  };
-  const exportPOPdf = () => {
-    const rowsToExport = selRows.length > 0 ? selRows : sorted;
-    if (rowsToExport.length === 0) { ctx.toast("ไม่มีรายการให้ส่งออก", "error"); return; }
-    const total = rowsToExport.reduce((s,p)=>s + p.price*p.suggest, 0);
-    printPODocument({
-      title: "ใบขอสั่งซื้ออะไหล่ (Reorder)",
-      subtitle: "ออกเมื่อ " + new Date().toLocaleDateString("th-TH"),
-      meta: [{ label:"จำนวนรายการ", value: rowsToExport.length + " รายการ" }],
-      items: rowsToExport.map(p => ({ code:p.code, name:p.name, qty:p.suggest, unit:Ds.fmtMoney(p.price), sum:Ds.fmtMoney(p.price*p.suggest) })),
-      total: Ds.fmtMoney(total),
+    exportRowsToXlsx(ctx, data, "ใบสั่งซื้อ", "ใบสั่งซื้อ_" + new Date().toISOString().slice(0,10) + ".xlsx", {
+      emptyMsg: "ไม่มีรายการให้ส่งออก",
+      successMsg: "ส่งออกใบสั่งซื้อ " + data.length + " รายการแล้ว",
     });
   };
+  const buildPODoc = () => {
+    const rowsToExport = selRows.length > 0 ? selRows : sorted;
+    if (rowsToExport.length === 0) { ctx.toast("ไม่มีรายการให้ส่งออก", "error"); return null; }
+    const total = rowsToExport.reduce((s,p)=>s + p.price*p.suggest, 0);
+    return {
+      title: "ใบขอสั่งซื้ออะไหล่ (Reorder)",
+      meta: [
+        { label:"เลขที่", value: "DRAFT" },
+        { label:"วันที่ออกเอกสาร", value: new Date().toLocaleDateString("th-TH") },
+        { label:"จำนวนรายการ", value: rowsToExport.length + " รายการ" },
+      ],
+      items: rowsToExport.map(p => ({ code:p.code, name:p.name, qty:p.suggest, unit:Ds.fmtMoney(p.price), sum:Ds.fmtMoney(p.price*p.suggest) })),
+      total: Ds.fmtMoney(total),
+    };
+  };
+  const exportPOPdf = () => { const doc = buildPODoc(); if (doc) printPODocument(doc); };
+  const exportPOWord = () => { const doc = buildPODoc(); if (doc) downloadPOWordDoc(doc); };
   return (
     <div>
       <PageHead title="รายการต้องสั่งซื้อ (Reorder)" sub={`อะไหล่ที่คงคลัง ≤ ROP · ${rows.length} รายการ`} actions={
-        <><ExportMenuButton label="ส่งออกใบสั่งซื้อ" onExcel={exportPOExcel} onPdf={exportPOPdf} />
+        <><ExportMenuButton label="ส่งออกใบสั่งซื้อ" onExcel={exportPOExcel} onPdf={exportPOPdf} onWord={exportPOWord} />
         <button className="btn btn-primary" disabled={sel.size===0} onClick={()=>setShowCreatePO(true)}><Icon name="plus" size={15}/> สร้าง PO ({sel.size})</button></>
       } />
       {showCreatePO && <CreatePOModal ctx={ctx} rows={selRows} onClose={()=>setShowCreatePO(false)}
@@ -466,35 +461,31 @@ function ReorderList({ ctx }) {
 function PODetailModal({ ctx, po, onClose }) {
   const items = (Ds.poItems && Ds.poItems[po.no]) || [];
   const exportExcel = () => {
-    if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return; }
     const data = items.map(it => ({
       "Part Code": it.code, "ชื่ออะไหล่": it.name, "จำนวน": it.qty,
       "ราคา/หน่วย": it.unit, "มูลค่ารวม": it.unit*it.qty,
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, po.no);
-    XLSX.writeFile(wb, `ใบสั่งซื้อ_${po.no}.xlsx`);
-    ctx.toast("ส่งออก "+po.no+" แล้ว", "check");
+    exportRowsToXlsx(ctx, data, po.no, `ใบสั่งซื้อ_${po.no}.xlsx`, { successMsg: "ส่งออก " + po.no + " แล้ว" });
   };
-  const exportPdf = () => {
-    printPODocument({
-      title: `ใบสั่งซื้อ ${po.no}`,
-      subtitle: `ผู้ขาย: ${po.supplier}  ·  วันที่สร้าง: ${po.date}`,
-      meta: [
-        { label:"กำหนดรับ", value: po.expected || "—" },
-        { label:"จำนวนรายการ", value: po.items + " รายการ" },
-        { label:"หมายเหตุ", value: po.note || "—" },
-      ],
-      items: items.map(it => ({ code:it.code, name:it.name, qty:it.qty, unit:Ds.fmtMoney(it.unit), sum:Ds.fmtMoney(it.unit*it.qty) })),
-      total: Ds.fmtMoney(po.total),
-    });
-  };
+  const buildPODoc = () => ({
+    title: `ใบสั่งซื้อ ${po.no}`,
+    supplier: po.supplier,
+    meta: [
+      { label:"เลขที่", value: po.no },
+      { label:"วันที่ออกเอกสาร", value: po.date },
+      { label:"กำหนดรับ", value: po.expected || "—" },
+    ],
+    items: items.map(it => ({ code:it.code, name:it.name, qty:it.qty, unit:Ds.fmtMoney(it.unit), sum:Ds.fmtMoney(it.unit*it.qty) })),
+    note: po.note,
+    total: Ds.fmtMoney(po.total),
+  });
+  const exportPdf = () => printPODocument(buildPODoc());
+  const exportWord = () => downloadPOWordDoc(buildPODoc());
   return (
     <Modal title={`ใบสั่งซื้อ ${po.no}`} onClose={onClose} wide>
       <div className="stack">
         <div className="row" style={{justifyContent:"flex-end"}}>
-          <ExportMenuButton label="ส่งออก" onExcel={exportExcel} onPdf={exportPdf} />
+          <ExportMenuButton label="ส่งออก" onExcel={exportExcel} onPdf={exportPdf} onWord={exportWord} />
         </div>
         <div className="grid" style={{gridTemplateColumns:"1fr 1fr", gap:14}}>
           <div className="card card-pad" style={{background:"var(--surface-2)"}}>

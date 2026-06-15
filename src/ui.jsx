@@ -228,8 +228,20 @@ function Modal({ title, onClose, children, wide }) {
   );
 }
 
-/* ---------------- Export menu (Excel / PDF) ---------------- */
-function ExportMenuButton({ label = "ส่งออก", onExcel, onPdf, primary, disabled }) {
+/* ---------------- Export rows to an .xlsx file ---------------- */
+function exportRowsToXlsx(ctx, data, sheetName, filename, { emptyMsg, successMsg } = {}) {
+  if (typeof XLSX === "undefined") { ctx.toast("ไม่พบไลบรารีสำหรับส่งออก Excel", "error"); return false; }
+  if (emptyMsg && data.length === 0) { ctx.toast(emptyMsg, "error"); return false; }
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  XLSX.writeFile(wb, filename);
+  ctx.toast(successMsg || ("ส่งออก " + data.length + " รายการแล้ว"), "check");
+  return true;
+}
+
+/* ---------------- Export menu (Excel / PDF / Word) ---------------- */
+function ExportMenuButton({ label = "ส่งออก", onExcel, onPdf, onWord, primary, disabled }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -248,54 +260,133 @@ function ExportMenuButton({ label = "ส่งออก", onExcel, onPdf, primar
         <div className="card" style={{ position:"absolute", top:"calc(100% + 6px)", right:0, zIndex:80, minWidth:170, padding:6 }}>
           <button className="btn btn-ghost btn-block" style={{ justifyContent:"flex-start" }} onClick={()=>pick(onExcel)}>ไฟล์ Excel (.xlsx)</button>
           <button className="btn btn-ghost btn-block" style={{ justifyContent:"flex-start", marginTop:4 }} onClick={()=>pick(onPdf)}>ไฟล์ PDF</button>
+          {onWord && <button className="btn btn-ghost btn-block" style={{ justifyContent:"flex-start", marginTop:4 }} onClick={()=>pick(onWord)}>ไฟล์ Word (.doc)</button>}
         </div>
       }
     </div>
   );
 }
 
-/* ---------------- Print a PO-style document (export PDF via browser print) ---------------- */
-function printPODocument({ title, subtitle, meta = [], items = [], totalLabel = "มูลค่ารวม", total }) {
-  const w = window.open("", "_blank");
-  if (!w) return false;
+/* ---------------- Company info shown on printed PO documents (edit to match your company) ---------------- */
+const COMPANY_INFO = {
+  name: "Complete Auto Rubber Manufacturing Co., Ltd.",
+  address: "700/498 ม.7 ต.ดอนหัวฬ่อ อ.เมือง จ.ชลบุรี 20000",
+  phone: "038-454-106-108",
+};
+
+/* ---------------- Build the shared PO document HTML (used for print/PDF and Word export) ---------------- */
+function buildPODocumentHtml({ title, supplier, meta = [], items = [], note, totalLabel = "จำนวนเงินรวมทั้งสิ้น", total }, { forWord = false } = {}) {
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
-  const metaHtml = meta.map(m => `<div class="meta-item"><span class="lbl">${esc(m.label)}</span><span class="val">${esc(m.value)}</span></div>`).join("");
-  const rowsHtml = items.map(it => `
+  const logoUrl = window.location.origin + window.location.pathname.replace(/[^/]*$/, "") + "assets/logo.png";
+  const metaHtml = meta.map(m => `<tr><td class="lbl">${esc(m.label)}</td><td class="val">${esc(m.value)}</td></tr>`).join("");
+  const rowsHtml = items.map((it, i) => `
     <tr>
+      <td class="num">${i + 1}</td>
       <td>${esc(it.code)}</td>
       <td>${esc(it.name)}</td>
       <td class="num">${esc(it.qty)}</td>
       <td class="num">${esc(it.unit)}</td>
       <td class="num">${esc(it.sum)}</td>
     </tr>`).join("");
-  w.document.write(`<!DOCTYPE html>
-<html lang="th"><head><meta charset="utf-8"><title>${esc(title)}</title>
+  const msoHead = forWord ? `
+<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->` : "";
+  const printScript = forWord ? "" : `<script>window.onload=function(){ window.print(); };<\/script>`;
+  return `<!DOCTYPE html>
+<html ${forWord ? 'xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"' : ""} lang="th"><head><meta charset="utf-8"><title>${esc(title)}</title>${msoHead}
 <style>
   *{ box-sizing:border-box; }
-  body{ font-family:"Tahoma","Segoe UI",sans-serif; padding:32px; color:#1a1a1a; }
-  h1{ font-size:20px; margin:0 0 2px; }
-  .sub{ font-size:13px; color:#777; margin-bottom:18px; }
-  .meta{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px 24px; margin-bottom:18px; font-size:13px; }
-  .meta-item .lbl{ display:block; color:#888; font-size:11px; }
-  .meta-item .val{ font-weight:700; }
-  table{ width:100%; border-collapse:collapse; font-size:13px; }
-  th,td{ border:1px solid #ccc; padding:6px 8px; text-align:left; }
-  th{ background:#f3f1ec; }
+  body{ font-family:"Tahoma","Segoe UI",sans-serif; padding:36px; color:#1a1a1a; font-size:13px; }
+  .doc-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:24px; border-bottom:3px solid #1e6fd9; padding-bottom:14px; margin-bottom:14px; }
+  .doc-head .logo-box img{ max-height:54px; display:block; margin-bottom:8px; }
+  .doc-head .company{ font-size:12px; color:#555; line-height:1.6; }
+  .doc-head .company b{ font-size:14px; color:#1a1a1a; display:block; margin-bottom:2px; }
+  .doc-head .doc-info{ text-align:right; min-width:240px; }
+  .doc-head .doc-info h1{ font-size:24px; font-weight:800; color:#1e6fd9; margin:0 0 10px; }
+  .doc-meta{ font-size:12px; width:100%; border-collapse:collapse; }
+  .doc-meta td{ padding:2px 0; }
+  .doc-meta td.lbl{ color:#888; text-align:left; padding-right:14px; }
+  .doc-meta td.val{ font-weight:700; text-align:right; }
+  .party{ margin:16px 0; }
+  .party h4{ margin:0 0 4px; font-size:11px; color:#1e6fd9; text-transform:uppercase; letter-spacing:.04em; }
+  .party .name{ font-weight:700; font-size:14px; }
+  table.items{ width:100%; border-collapse:collapse; font-size:13px; margin-top:6px; }
+  table.items th, table.items td{ border:1px solid #ccc; padding:6px 8px; text-align:left; }
+  table.items th{ background:#eef4fc; }
   .num{ text-align:right; }
-  tfoot td{ font-weight:700; }
+  .totals{ margin:12px 0 0 auto; width:300px; border-collapse:collapse; font-size:13px; }
+  .totals td{ padding:5px 8px; }
+  .totals td:first-child{ color:#666; }
+  .totals td:last-child{ text-align:right; font-weight:700; }
+  .totals tr.grand td{ font-size:15px; font-weight:800; border-top:2px solid #1a1a1a; color:#1e6fd9; }
+  .note{ margin-top:18px; font-size:12px; }
+  .note .lbl{ color:#888; display:block; margin-bottom:2px; }
+  .sign{ display:flex; justify-content:space-between; margin-top:70px; font-size:12px; text-align:center; }
+  .sign .box{ width:220px; }
+  .sign .row{ border-top:1px solid #999; margin-top:46px; padding-top:6px; }
+  .sign .row + .row{ margin-top:30px; }
 </style></head>
 <body>
-  <h1>${esc(title)}</h1>
-  ${subtitle ? `<div class="sub">${esc(subtitle)}</div>` : ""}
-  ${metaHtml ? `<div class="meta">${metaHtml}</div>` : ""}
-  <table>
-    <thead><tr><th>Part Code</th><th>ชื่ออะไหล่</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">รวม</th></tr></thead>
+  <div class="doc-head">
+    <div>
+      <div class="logo-box"><img src="${logoUrl}" alt="logo" width="121" height="56"></div>
+      <div class="company">
+        <b>${esc(COMPANY_INFO.name)}</b>
+        ${esc(COMPANY_INFO.address)}<br>
+        โทร. ${esc(COMPANY_INFO.phone)}
+      </div>
+    </div>
+    <div class="doc-info">
+      <h1>${esc(title)}</h1>
+      <table class="doc-meta">${metaHtml}</table>
+    </div>
+  </div>
+  <div class="party">
+    <h4>ผู้จำหน่าย / Vendor</h4>
+    <div class="name">${esc(supplier || "—")}</div>
+  </div>
+  <table class="items">
+    <thead><tr><th style="width:36px">#</th><th>Part Code</th><th>รายการ</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">มูลค่า</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
-    <tfoot><tr><td colspan="4" class="num">${esc(totalLabel)}</td><td class="num">${esc(total)}</td></tr></tfoot>
   </table>
-  <script>window.onload=function(){ window.print(); };<\/script>
-</body></html>`);
+  <table class="totals">
+    <tr class="grand"><td>${esc(totalLabel)}</td><td>${esc(total)}</td></tr>
+  </table>
+  ${note ? `<div class="note"><span class="lbl">หมายเหตุ</span>${esc(note)}</div>` : ""}
+  <div class="sign">
+    <div class="box">
+      <div class="row">ผู้จัดทำ</div>
+      <div class="row">วันที่</div>
+    </div>
+    <div class="box">
+      <div class="row">ผู้อนุมัติ</div>
+      <div class="row">วันที่</div>
+    </div>
+  </div>
+  ${printScript}
+</body></html>`;
+}
+
+/* ---------------- Print a PO-style document (export PDF via browser print) ---------------- */
+function printPODocument(opts) {
+  const w = window.open("", "_blank");
+  if (!w) return false;
+  w.document.write(buildPODocumentHtml(opts));
   w.document.close();
+  return true;
+}
+
+/* ---------------- Download a PO-style document as an editable Word (.doc) file ---------------- */
+function downloadPOWordDoc(opts) {
+  const html = buildPODocumentHtml(opts, { forWord: true });
+  const blob = new Blob(["﻿", html], { type: "application/msword" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = (opts.title || "document").replace(/[\\/:*?"<>|]/g, "_") + ".doc";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
   return true;
 }
 
