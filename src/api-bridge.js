@@ -342,6 +342,12 @@
     DATA.reliability = j;
     return j;
   };
+  DATA.loadMonthlyReport = async (year, month) => {
+    const res = await fetch(API + `/api/monthly-report?year=${year}&month=${month}`);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "load monthly report failed");
+    return j;
+  };
   DATA.refresh = load;
 
   /* ---------- auto-poll: ตรวจสถานะใบแจ้งซ่อม / คลังอะไหล่เปลี่ยน ---------- */

@@ -985,4 +985,197 @@ function ReliabilityDashboard({ ctx }) {
   );
 }
 
-Object.assign(window, { Dashboard, Admin, AlertRow, ReliabilityDashboard });
+/* ---------------- Monthly Report ---------------- */
+const MONTH_NAMES_TH = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน",
+  "กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+
+function MonthlyReport({ ctx }) {
+  const now   = new Date();
+  const [year,  setYear]  = React.useState(now.getFullYear());
+  const [month, setMonth] = React.useState(now.getMonth() + 1);
+  const [data,  setData]  = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error,   setError]   = React.useState(null);
+
+  const load = () => {
+    setLoading(true); setError(null); setData(null);
+    DATA.loadMonthlyReport(year, month)
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  };
+
+  const PRIORITY_TH = { Critical:"วิกฤต", High:"สูง", Medium:"ปานกลาง", Low:"ต่ำ" };
+  const STATUS_TH   = { Completed:"เสร็จสิ้น", "In Progress":"กำลังซ่อม", New:"ใหม่", Waiting:"รอดำเนินการ", Resubmitted:"ส่งซ่อมใหม่" };
+  const fmtDate = (s) => s ? new Date(s).toLocaleDateString("th-TH",{day:"2-digit",month:"2-digit",year:"numeric"}) : "—";
+  const fmtNum  = (n) => Number(n||0).toLocaleString("en-US");
+  const yearOpts = [now.getFullYear(), now.getFullYear()-1, now.getFullYear()-2];
+
+  return (
+    <div>
+      {/* ===== Controls (ซ่อนตอนพิมพ์) ===== */}
+      <div className="no-print">
+        <PageHead title="รายงานประจำเดือน" sub="สรุปงานซ่อมบำรุงและแผน PM สำหรับผู้บริหาร"
+          actions={
+            <div className="row gap-sm">
+              <select className="select" style={{ width:"auto" }} value={month} onChange={e=>setMonth(Number(e.target.value))}>
+                {MONTH_NAMES_TH.slice(1).map((n,i)=><option key={i+1} value={i+1}>{n}</option>)}
+              </select>
+              <select className="select" style={{ width:"auto" }} value={year} onChange={e=>setYear(Number(e.target.value))}>
+                {yearOpts.map(y=><option key={y} value={y}>{y}</option>)}
+              </select>
+              <button className="btn btn-primary" onClick={load}><Icon name="refresh" size={15}/> โหลดรายงาน</button>
+              {data && <button className="btn" onClick={()=>window.print()}><Icon name="download" size={15}/> พิมพ์ / PDF</button>}
+            </div>
+          }
+        />
+        {!data && !loading && !error && (
+          <div className="panel" style={{ textAlign:"center", padding:48 }}>
+            <div className="muted">เลือกเดือนและปี แล้วกด "โหลดรายงาน"</div>
+          </div>
+        )}
+        {loading && <div style={{ padding:48, textAlign:"center" }} className="muted">กำลังโหลด…</div>}
+        {error   && <div style={{ padding:48, textAlign:"center", color:"var(--red)" }}>โหลดไม่สำเร็จ: {error}</div>}
+      </div>
+
+      {/* ===== Printable Report ===== */}
+      {data && (() => {
+        const { kpi={}, pmKpi={}, repairs=[], pmRows=[], topMachines=[], costRow={}, year:y, month:m } = data;
+        const periodLabel = `${MONTH_NAMES_TH[m]} ${y}`;
+
+        return (
+          <div className="print-report">
+            {/* Header */}
+            <div className="rpt-header">
+              <div>
+                <div className="rpt-title">รายงานงานซ่อมบำรุงประจำเดือน</div>
+                <div className="rpt-subtitle">Monthly Maintenance Report — {periodLabel}</div>
+              </div>
+              <div className="rpt-meta">
+                <div style={{ fontWeight:600 }}>บริษัท ซี.เอ.อาร์. ไทยแลนด์ จำกัด</div>
+                <div className="rpt-meta-small">วันที่พิมพ์: {fmtDate(new Date().toISOString())}</div>
+                <div className="rpt-meta-small">จัดทำโดย: ระบบ MT</div>
+              </div>
+            </div>
+            <div className="rpt-divider"/>
+
+            {/* 1) KPI */}
+            <div className="rpt-section-title">1. สรุปผลการดำเนินงาน</div>
+            <div className="rpt-kpi-grid">
+              {[
+                { label:"ใบแจ้งซ่อมทั้งหมด",      value:fmtNum(kpi.total_requests), unit:"ใบ",   warn:false },
+                { label:"ดำเนินการเสร็จสิ้น",      value:fmtNum(kpi.completed),      unit:"ใบ",   warn:false },
+                { label:"อยู่ระหว่างดำเนินการ",    value:fmtNum(kpi.in_progress),    unit:"ใบ",   warn:Number(kpi.in_progress)>0 },
+                { label:"งานวิกฤต",                value:fmtNum(kpi.critical_count), unit:"ใบ",   warn:Number(kpi.critical_count)>0 },
+                { label:"Downtime รวม",            value:fmtNum(kpi.total_downtime), unit:"ชม.", warn:false },
+                { label:"ค่าอะไหล่รวม",            value:"฿"+fmtNum(costRow.parts_cost||0), unit:"", warn:false },
+              ].map(k=>(
+                <div key={k.label} className={"rpt-kpi-card"+(k.warn?" rpt-kpi-card--warn":"")}>
+                  <div className="rpt-kpi-value">{k.value}{k.unit && <span className="rpt-kpi-unit"> {k.unit}</span>}</div>
+                  <div className="rpt-kpi-label">{k.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* 2) Top machines */}
+            {topMachines.length > 0 && <>
+              <div className="rpt-section-title" style={{ marginTop:18 }}>2. เครื่องจักรที่มีปัญหาบ่อย</div>
+              <table className="rpt-table">
+                <thead><tr><th>#</th><th>รหัสเครื่อง</th><th>ชื่อเครื่อง</th><th>Rank</th><th className="num">Breakdown</th><th className="num">Downtime (ชม.)</th></tr></thead>
+                <tbody>
+                  {topMachines.map((m,i)=>(
+                    <tr key={m.code}>
+                      <td>{i+1}</td>
+                      <td className="mono">{m.code}</td>
+                      <td>{m.name}</td>
+                      <td style={{ fontWeight:700, color:m.rank==="A"?"#dc2626":m.rank==="B"?"#d97706":"#2563eb" }}>{m.rank}</td>
+                      <td className="num">{m.breakdowns}</td>
+                      <td className="num">{m.downtime||"—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>}
+
+            {/* 3) Repair details */}
+            <div className="rpt-section-title" style={{ marginTop:18 }}>3. รายละเอียดใบแจ้งซ่อม</div>
+            {repairs.length === 0
+              ? <div className="rpt-empty">ไม่มีใบแจ้งซ่อมในช่วงเดือนนี้</div>
+              : <table className="rpt-table">
+                  <thead><tr><th>เลขที่</th><th>เครื่อง</th><th>รายละเอียดปัญหา</th><th>ความสำคัญ</th><th>สถานะ</th><th>วันแจ้ง</th><th className="num">Downtime</th><th>ช่างผู้รับ</th></tr></thead>
+                  <tbody>
+                    {repairs.map(r=>(
+                      <tr key={r.request_no}>
+                        <td className="mono" style={{ fontSize:11 }}>{r.request_no}</td>
+                        <td className="mono" style={{ fontSize:11 }}>{r.machine_code||"—"}</td>
+                        <td style={{ fontSize:11 }}>{r.description}</td>
+                        <td style={{ fontSize:11, fontWeight:700, color:r.priority==="Critical"?"#dc2626":r.priority==="High"?"#d97706":"#374151" }}>{PRIORITY_TH[r.priority]||r.priority}</td>
+                        <td style={{ fontSize:11 }}>{STATUS_TH[r.status]||r.status}</td>
+                        <td style={{ fontSize:11 }}>{fmtDate(r.created_at)}</td>
+                        <td className="num" style={{ fontSize:11 }}>{r.downtime||"—"}</td>
+                        <td style={{ fontSize:11 }}>{r.technician||"—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+            }
+
+            {/* 4) PM summary */}
+            <div className="rpt-section-title" style={{ marginTop:18 }}>4. สรุปแผนการบำรุงรักษา (PM)</div>
+            <div className="rpt-kpi-grid" style={{ gridTemplateColumns:"repeat(3,1fr)" }}>
+              {[
+                { label:"PM ครบกำหนดในเดือนนี้", value:fmtNum(pmKpi.total_pm),    unit:"รายการ", warn:false },
+                { label:"ดำเนินการเสร็จแล้ว",    value:fmtNum(pmKpi.pm_completed), unit:"รายการ", warn:false },
+                { label:"เกินกำหนด",             value:fmtNum(pmKpi.pm_overdue),   unit:"รายการ", warn:Number(pmKpi.pm_overdue)>0 },
+              ].map(k=>(
+                <div key={k.label} className={"rpt-kpi-card"+(k.warn?" rpt-kpi-card--warn":"")}>
+                  <div className="rpt-kpi-value">{k.value}<span className="rpt-kpi-unit"> {k.unit}</span></div>
+                  <div className="rpt-kpi-label">{k.label}</div>
+                </div>
+              ))}
+            </div>
+            {pmRows.length > 0 && (
+              <table className="rpt-table" style={{ marginTop:10 }}>
+                <thead><tr><th>เครื่อง</th><th>Checklist</th><th>ความถี่</th><th>Rank</th><th>กำหนดทำ</th><th>ทำเสร็จวันที่</th><th>สถานะ</th></tr></thead>
+                <tbody>
+                  {pmRows.map((p,i)=>{
+                    const today = new Date().toISOString().slice(0,10);
+                    const st = p.completed ? "เสร็จสิ้น" : (p.next_pm_date < today ? "เกินกำหนด" : "รอดำเนินการ");
+                    const stColor = p.completed?"#16a34a":st==="เกินกำหนด"?"#dc2626":"#374151";
+                    return (
+                      <tr key={i}>
+                        <td className="mono" style={{ fontSize:11 }}>{p.machine_code}</td>
+                        <td style={{ fontSize:11 }}>{p.checklist}</td>
+                        <td style={{ fontSize:11 }}>{p.frequency}</td>
+                        <td style={{ fontWeight:700, fontSize:11, color:p.rank==="A"?"#dc2626":p.rank==="B"?"#d97706":"#2563eb" }}>{p.rank}</td>
+                        <td style={{ fontSize:11 }}>{fmtDate(p.next_pm_date)}</td>
+                        <td style={{ fontSize:11 }}>{fmtDate(p.last_pm_date)}</td>
+                        <td style={{ fontSize:11, fontWeight:700, color:stColor }}>{st}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+
+            {/* Signature */}
+            <div className="rpt-sig">
+              {["ผู้จัดทำรายงาน","ผู้จัดการฝ่ายซ่อมบำรุง","ผู้อำนวยการ / ผู้บริหาร"].map(n=>(
+                <div key={n} className="rpt-sig-box">
+                  <div className="rpt-sig-line"/>
+                  <div style={{ fontSize:12 }}>{n}</div>
+                  <div style={{ fontSize:11, color:"#6b7280", marginTop:2 }}>วันที่ ……………………</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="rpt-footer">
+              ระบบ MT — CAR Thailand &nbsp;|&nbsp; {periodLabel} &nbsp;|&nbsp; พิมพ์: {fmtDate(new Date().toISOString())}
+            </div>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+Object.assign(window, { Dashboard, Admin, AlertRow, ReliabilityDashboard, MonthlyReport });

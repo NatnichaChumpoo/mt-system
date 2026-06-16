@@ -756,6 +756,92 @@ app.get("/api/reliability", async (req, res) => {
   } finally { conn.release(); }
 });
 
+// ---------- READ: Monthly Report ----------
+app.get("/api/monthly-report", async (req, res) => {
+  const now   = new Date();
+  const year  = Number(req.query.year)  || now.getFullYear();
+  const month = Number(req.query.month) || (now.getMonth() + 1);
+  const pad   = String(month).padStart(2, "0");
+  const start = `${year}-${pad}-01`;
+  // last day of month
+  const end   = new Date(year, month, 0).toISOString().slice(0, 10);
+
+  const conn = await pool.getConnection();
+  try {
+    // 1) KPI summary
+    const [[kpi]] = await conn.query(
+      `SELECT
+         COUNT(*)                                        AS total_requests,
+         SUM(status = 'Completed')                       AS completed,
+         SUM(status NOT IN ('Completed','Resubmitted'))  AS in_progress,
+         ROUND(SUM(COALESCE(downtime_hours, 0)), 1)      AS total_downtime,
+         SUM(priority = 'Critical')                      AS critical_count
+       FROM maintenance_requests
+       WHERE DATE(created_at) BETWEEN ? AND ?`, [start, end]
+    );
+
+    // 2) PM summary
+    const [[pmKpi]] = await conn.query(
+      `SELECT
+         COUNT(*)                          AS total_pm,
+         SUM(completed = TRUE)             AS pm_completed,
+         SUM(completed = FALSE AND next_pm_date < ?)  AS pm_overdue
+       FROM pm_schedules
+       WHERE next_pm_date BETWEEN ? AND ?`, [end, start, end]
+    );
+
+    // 3) repair detail rows
+    const [repairs] = await conn.query(
+      `SELECT r.request_no, m.code AS machine_code, m.name AS machine_name,
+              r.problem_description AS description, r.priority, r.status,
+              r.created_at, r.finish_repair AS completed_at,
+              ROUND(COALESCE(r.downtime_hours, 0), 1) AS downtime,
+              ra.corrective_action,
+              r.accepted_by_name AS technician
+       FROM maintenance_requests r
+       LEFT JOIN machines m ON m.id = r.machine_id
+       LEFT JOIN repair_actions ra ON ra.request_id = r.id
+       WHERE DATE(r.created_at) BETWEEN ? AND ?
+       ORDER BY r.created_at`, [start, end]
+    );
+
+    // 4) PM detail rows
+    const [pmRows] = await conn.query(
+      `SELECT pm.checklist, pm.frequency, pm.next_pm_date, pm.last_pm_date,
+              pm.completed,
+              m.code AS machine_code, m.name AS machine_name, m.rank
+       FROM pm_schedules pm
+       JOIN machines m ON m.id = pm.machine_id
+       WHERE pm.next_pm_date BETWEEN ? AND ?
+       ORDER BY pm.next_pm_date`, [start, end]
+    );
+
+    // 5) top 5 machines by breakdown
+    const [topMachines] = await conn.query(
+      `SELECT m.code, m.name, m.rank,
+              COUNT(*) AS breakdowns,
+              ROUND(SUM(COALESCE(r.downtime_hours, 0)), 1) AS downtime
+       FROM maintenance_requests r
+       LEFT JOIN machines m ON m.id = r.machine_id
+       WHERE DATE(r.created_at) BETWEEN ? AND ?
+       GROUP BY m.id ORDER BY breakdowns DESC LIMIT 5`, [start, end]
+    );
+
+    // 6) parts cost this month
+    const [[costRow]] = await conn.query(
+      `SELECT ROUND(SUM(spu.qty_used * spu.unit_cost), 2) AS parts_cost, COUNT(*) AS parts_items
+       FROM spare_part_usage spu
+       JOIN maintenance_requests r ON r.id = spu.request_id
+       WHERE DATE(r.created_at) BETWEEN ? AND ?`, [start, end]
+    );
+
+    res.json({ year, month, start, end, kpi, pmKpi, repairs, pmRows, topMachines, costRow });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
 // ---------- helpers ----------
 function calcNextPmDate(fromDate, frequency) {
   const d = new Date(fromDate);
