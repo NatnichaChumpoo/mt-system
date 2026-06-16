@@ -609,6 +609,28 @@ app.post("/api/machines", async (req, res) => {
   }
 });
 
+// ---------- WRITE: ลบเครื่องจักร ----------
+app.delete("/api/machines/:code", async (req, res) => {
+  const { code } = req.params;
+  const conn = await pool.getConnection();
+  try {
+    const [[mc]] = await conn.query(`SELECT id FROM machines WHERE code = ?`, [code]);
+    if (!mc) return res.status(404).json({ error: "ไม่พบเครื่อง: " + code });
+    const [[reqc]] = await conn.query(`SELECT COUNT(*) c FROM maintenance_requests WHERE machine_id = ?`, [mc.id]);
+    const [[pmc]] = await conn.query(`SELECT COUNT(*) c FROM pm_schedules WHERE machine_id = ?`, [mc.id]);
+    if (reqc.c > 0 || pmc.c > 0) {
+      return res.status(409).json({ error: "ไม่สามารถลบได้ เนื่องจากเครื่องนี้มีใบแจ้งซ่อมหรือแผน PM ที่เกี่ยวข้องอยู่" });
+    }
+    await conn.query(`DELETE FROM machines WHERE id = ?`, [mc.id]);
+    res.json({ ok: true, code });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally {
+    conn.release();
+  }
+});
+
 // ---------- WRITE: เพิ่มผู้ใช้งาน ----------
 app.post("/api/users", async (req, res) => {
   const { fullName, role = "operator", email, phone, telegramId } = req.body || {};

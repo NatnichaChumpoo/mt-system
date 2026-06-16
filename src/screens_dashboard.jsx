@@ -572,8 +572,25 @@ function Admin({ ctx }) {
   const partGroups = [...new Set(Dd.parts.map(p => p.group))].filter(Boolean);
   const [addingUser, setAddingUser] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const [deletingCode, setDeletingCode] = useState(null);
   const isAdmin = ctx.role === "Admin";
   const tabs = [["machines","เครื่องจักร","machine"],["parts","อะไหล่","box"],...(isAdmin?[["users","ผู้ใช้/สิทธิ์","user"]]:[])];
+
+  const deleteMachine = async (m) => {
+    if (deletingCode) return;
+    if (!window.confirm("ลบเครื่องจักร " + m.code + " — " + m.name + " ?")) return;
+    setDeletingCode(m.code);
+    try {
+      await DATA.deleteMachine(m.code);
+      await DATA.refresh();
+      ctx.toast("ลบเครื่อง " + m.code + " แล้ว", "check");
+      window.dispatchEvent(new Event("mt-data-refresh"));
+    } catch (e) {
+      ctx.toast(e.message, "error");
+    } finally {
+      setDeletingCode(null);
+    }
+  };
   return (
     <div>
       <PageHead title={isAdmin?"ผู้ดูแลระบบ (Admin)":"จัดการเครื่องจักร & อะไหล่"} sub="จัดการ Master Data — เครื่องจักร · อะไหล่" />
@@ -615,7 +632,10 @@ function Admin({ ctx }) {
                     <td className="small muted">{m.maker} · {m.model}</td>
                     <td><span className={"badge "+(m.status==="Running"?"b-green":"b-red")}><span className="dot"></span>{m.status}</span></td>
                     <td><button className="btn btn-sm" onClick={()=>setQr(m)}><Icon name="qr" size={14}/> สร้าง QR</button></td>
-                    <td><div className="row gap-sm"><button className="icon-btn" style={{width:30,height:30}} onClick={()=>setEditingMachine(m)}><Icon name="edit" size={14}/></button></div></td>
+                    <td><div className="row gap-sm">
+                      <button className="icon-btn" style={{width:30,height:30}} onClick={()=>setEditingMachine(m)}><Icon name="edit" size={14}/></button>
+                      <button className="icon-btn" style={{width:30,height:30}} disabled={deletingCode===m.code} onClick={()=>deleteMachine(m)}><Icon name="trash" size={14}/></button>
+                    </div></td>
                   </tr>
                 ))}
               </tbody>

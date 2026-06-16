@@ -236,6 +236,14 @@
     if (!res.ok) throw new Error(j.error || "เพิ่มเครื่องจักรไม่สำเร็จ");
     return j;
   };
+  DATA.deleteMachine = async (code) => {
+    const res = await fetch(API + "/api/machines/" + encodeURIComponent(code), {
+      method: "DELETE",
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "ลบเครื่องจักรไม่สำเร็จ");
+    return j;
+  };
   DATA.updatePart = async ({ code, name, group, partRank, max, min, safety, rop, price }) => {
     const res = await fetch(API + "/api/parts/" + encodeURIComponent(code), {
       method: "PUT", headers: { "Content-Type": "application/json" },
