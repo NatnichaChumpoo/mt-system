@@ -141,10 +141,39 @@ async function pollUpdates() {
   }
 }
 
-// ---------- (3) แจ้งเตือน PM เกินกำหนด (รันวันละครั้ง) ----------
-async function checkPmOverdue() {
+// ---------- (3) แจ้งเตือน PM (ล่วงหน้า 7 วัน + เกินกำหนด) รันวันละครั้ง ----------
+async function checkPmAlerts() {
   const today = new Date().toISOString().slice(0, 10);
-  const rows = await q(
+
+  // --- ล่วงหน้า 7 วัน (ส่งครั้งเดียวต่อรอบ PM) ---
+  const upcoming = await q(
+    `SELECT pm.id, pm.checklist, pm.frequency, pm.next_pm_date,
+            m.code AS mc, m.name, m.rank,
+            DATEDIFF(pm.next_pm_date, CURDATE()) AS days_left
+     FROM pm_schedules pm
+     JOIN machines m ON m.id = pm.machine_id
+     WHERE DATEDIFF(pm.next_pm_date, CURDATE()) BETWEEN 6 AND 7
+     AND pm.completed = FALSE`
+  );
+  for (const pm of upcoming) {
+    const subject = `PM_UPCOMING:${pm.id}:${pm.next_pm_date}`;
+    const existing = await q(`SELECT id FROM notification_log WHERE subject = ? LIMIT 1`, [subject]);
+    if (existing.length > 0) continue;
+    const msg =
+      `📅 <b>แจ้งเตือนล่วงหน้า PM (อีก ${pm.days_left} วัน)</b>\n` +
+      `เครื่อง: ${pm.mc} — ${pm.name}\n` +
+      `Checklist: ${pm.checklist}\n` +
+      `กำหนดทำ: ${pm.next_pm_date}\n` +
+      `ความถี่: ${pm.frequency} | Rank: ${pm.rank}`;
+    await q(
+      `INSERT INTO notification_log (channel, recipient, subject, message) VALUES ('telegram', 'TEAM_CHAT', ?, ?)`,
+      [subject, msg]
+    );
+    console.log("[pm-upcoming] queued:", pm.mc, pm.next_pm_date);
+  }
+
+  // --- เกินกำหนด (ส่งทุกวันจนกว่าจะกดเสร็จ) ---
+  const overdue = await q(
     `SELECT pm.id, pm.checklist, pm.frequency, pm.next_pm_date,
             m.code AS mc, m.name, m.rank,
             DATEDIFF(CURDATE(), pm.next_pm_date) AS days_late
@@ -152,11 +181,9 @@ async function checkPmOverdue() {
      JOIN machines m ON m.id = pm.machine_id
      WHERE pm.next_pm_date < CURDATE() AND pm.completed = FALSE`
   );
-  for (const pm of rows) {
+  for (const pm of overdue) {
     const subject = `PM_OVERDUE:${pm.id}:${today}`;
-    const existing = await q(
-      `SELECT id FROM notification_log WHERE subject = ? LIMIT 1`, [subject]
-    );
+    const existing = await q(`SELECT id FROM notification_log WHERE subject = ? LIMIT 1`, [subject]);
     if (existing.length > 0) continue;
     const msg =
       `⚙️ <b>แจ้งเตือน PM เกินกำหนด</b>\n` +
@@ -170,7 +197,7 @@ async function checkPmOverdue() {
     );
     console.log("[pm-overdue] queued:", pm.mc, pm.next_pm_date);
   }
-  if (rows.length > 0) console.log(`[pm-overdue] ${rows.length} overdue PM(s) checked`);
+  console.log(`[pm-alerts] upcoming:${upcoming.length} overdue:${overdue.length}`);
 }
 
 async function main() {
@@ -186,9 +213,9 @@ async function main() {
   }
   console.log("[worker] started: send every", SEND_MS, "ms + long-poll callbacks");
   setInterval(() => sendPending().catch((e) => console.error(e)), SEND_MS);
-  // ตรวจ PM เกินกำหนดทันทีตอน start แล้วทุก 24 ชั่วโมง
-  checkPmOverdue().catch((e) => console.error("[pm-overdue]", e.message));
-  setInterval(() => checkPmOverdue().catch((e) => console.error("[pm-overdue]", e.message)), 24 * 60 * 60 * 1000);
+  // ตรวจ PM (ล่วงหน้า 7 วัน + เกินกำหนด) ทันทีตอน start แล้วทุก 24 ชั่วโมง
+  checkPmAlerts().catch((e) => console.error("[pm-alerts]", e.message));
+  setInterval(() => checkPmAlerts().catch((e) => console.error("[pm-alerts]", e.message)), 24 * 60 * 60 * 1000);
   // eslint-disable-next-line no-constant-condition
   while (true) { await pollUpdates(); }
 }
