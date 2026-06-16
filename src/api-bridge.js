@@ -236,6 +236,36 @@
     if (!res.ok) throw new Error(j.error || "เพิ่มเครื่องจักรไม่สำเร็จ");
     return j;
   };
+  DATA.createPmSchedule = async ({ machineCode, checklist, frequency, nextPmDate }) => {
+    const res = await fetch(API + "/api/pm-schedules", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ machineCode, checklist, frequency, nextPmDate }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "สร้างแผน PM ไม่สำเร็จ");
+    return j;
+  };
+  DATA.updatePmSchedule = async ({ id, checklist, frequency, nextPmDate }) => {
+    const res = await fetch(API + "/api/pm-schedules/" + encodeURIComponent(id), {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ checklist, frequency, nextPmDate }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "แก้ไขแผน PM ไม่สำเร็จ");
+    return j;
+  };
+  DATA.deletePmSchedule = async (id) => {
+    const res = await fetch(API + "/api/pm-schedules/" + encodeURIComponent(id), { method: "DELETE" });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "ลบแผน PM ไม่สำเร็จ");
+    return j;
+  };
+  DATA.completePmSchedule = async (id) => {
+    const res = await fetch(API + "/api/pm-schedules/" + encodeURIComponent(id) + "/complete", { method: "POST" });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "บันทึก PM ไม่สำเร็จ");
+    return j;
+  };
   DATA.deleteMachine = async (code) => {
     const res = await fetch(API + "/api/machines/" + encodeURIComponent(code), {
       method: "DELETE",

@@ -540,8 +540,39 @@ function ProductionVerify({ ctx }) {
 /* ---------------- 5.12 PM schedule ---------------- */
 const PM_BADGE = { "Completed": "b-green", "Overdue": "b-red", "Due Later": "b-blue" };
 const PM_TH = { "Completed": "เสร็จตามแผน", "Overdue": "เกินกำหนด", "Due Later": "ยังไม่ถึงกำหนด" };
-function PmDetailModal({ pm, onClose }) {
+const PM_FREQS = ["Daily","Weekly","Monthly","Quarterly","Yearly"];
+
+function PmDetailModal({ pm, ctx, onClose, onEdit, onDeleted, onCompleted }) {
   const m = Dw.machineByCode(pm.mc);
+  const [saving, setSaving] = useState(false);
+  const isAdmin = ctx.role === "Admin";
+
+  const doComplete = async () => {
+    if (!window.confirm("ยืนยันว่าทำ PM เสร็จแล้ว?\nระบบจะบันทึกวันนี้เป็น PM ล่าสุด และคำนวณวันนัดครั้งถัดไปอัตโนมัติ")) return;
+    setSaving(true);
+    try {
+      const r = await DATA.completePmSchedule(pm.id);
+      await DATA.refresh();
+      window.dispatchEvent(new Event("mt-data-refresh"));
+      ctx.toast("บันทึก PM เสร็จแล้ว — นัดครั้งถัดไป " + r.next, "check");
+      onCompleted();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const doDelete = async () => {
+    if (!window.confirm("ลบแผน PM นี้ถาวร?")) return;
+    setSaving(true);
+    try {
+      await DATA.deletePmSchedule(pm.id);
+      await DATA.refresh();
+      window.dispatchEvent(new Event("mt-data-refresh"));
+      ctx.toast("ลบแผน PM แล้ว", "check");
+      onDeleted();
+    } catch (e) { ctx.toast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={onClose}>
       <div style={{ background:"var(--surface)", borderRadius:16, width:"100%", maxWidth:520, boxShadow:"0 8px 40px rgba(0,0,0,.18)", overflow:"hidden" }} onClick={e=>e.stopPropagation()}>
@@ -603,6 +634,68 @@ function PmDetailModal({ pm, onClose }) {
               </div>
             </div>
           )}
+          <div className="row gap-sm" style={{ justifyContent:"flex-end", marginTop:4 }}>
+            {isAdmin && <button className="btn btn-danger" onClick={doDelete} disabled={saving}><Icon name="trash" size={14}/> ลบแผน</button>}
+            <button className="btn" onClick={onEdit} disabled={saving}><Icon name="edit" size={14}/> แก้ไข</button>
+            <button className="btn btn-primary" onClick={doComplete} disabled={saving}>
+              <Icon name="check" size={14}/> {saving ? "กำลังบันทึก…" : "ทำเสร็จแล้ว"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PmFormModal({ title, machines, initial, onSave, onClose }) {
+  const [f, setF] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const submit = async () => {
+    if (!f.machineCode) return;
+    if (!f.checklist.trim()) return;
+    setSaving(true);
+    try { await onSave(f); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }} onClick={onClose}>
+      <div style={{ background:"var(--surface)", borderRadius:16, width:"100%", maxWidth:480, boxShadow:"0 8px 40px rgba(0,0,0,.18)" }} onClick={e=>e.stopPropagation()}>
+        <div className="panel-head" style={{ padding:"16px 20px" }}>
+          <div className="h-sm">{title}</div>
+          <button className="icon-btn" onClick={onClose}><Icon name="x" size={18}/></button>
+        </div>
+        <div style={{ padding:"18px 20px", display:"grid", gap:14 }}>
+          {machines && (
+            <label className="field">
+              <span className="label">เครื่องจักร</span>
+              <select className="input" value={f.machineCode} onChange={e=>set("machineCode",e.target.value)}>
+                {machines.map(m=><option key={m.code} value={m.code}>{m.code} — {m.name}</option>)}
+              </select>
+            </label>
+          )}
+          <label className="field">
+            <span className="label">PM Checklist / รายการตรวจสอบ</span>
+            <textarea className="input" rows={3} value={f.checklist} onChange={e=>set("checklist",e.target.value)} placeholder="เช่น ตรวจสอบน้ำมัน, ทำความสะอาดฟิลเตอร์…" style={{ resize:"vertical" }}/>
+          </label>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            <label className="field">
+              <span className="label">ความถี่</span>
+              <select className="input" value={f.frequency} onChange={e=>set("frequency",e.target.value)}>
+                {PM_FREQS.map(f=><option key={f} value={f}>{f}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span className="label">วันนัด PM ครั้งถัดไป</span>
+              <input className="input" type="date" value={f.nextPmDate} onChange={e=>set("nextPmDate",e.target.value)}/>
+            </label>
+          </div>
+          <div className="row gap-sm" style={{ justifyContent:"flex-end", marginTop:4 }}>
+            <button className="btn" onClick={onClose} disabled={saving}>ยกเลิก</button>
+            <button className="btn btn-primary" onClick={submit} disabled={saving}>
+              {saving ? "กำลังบันทึก…" : <><Icon name="check" size={14}/> บันทึก</>}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -613,46 +706,106 @@ function PmSchedule({ ctx }) {
   const [q, setQ] = useState("");
   const [st, setSt] = useState("all");
   const [sel, setSel] = useState(null);
-  let rows = Dw.pm.filter((p) => (st === "all" || p.status === st) && (!q || (p.mc + p.name + p.checklist).toLowerCase().includes(q.toLowerCase())));
-  const overdue = Dw.pm.filter((p) => p.status === "Overdue").length;
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null);
+
+  const refresh = async () => { await DATA.refresh(); window.dispatchEvent(new Event("mt-data-refresh")); };
+
+  let rows = (Dw.pm || []).filter((p) => (st === "all" || p.status === st) && (!q || (p.mc + p.name + p.checklist).toLowerCase().includes(q.toLowerCase())));
+  const overdue = (Dw.pm || []).filter((p) => p.status === "Overdue").length;
+
+  const doExport = () => {
+    const data = (Dw.pm || []).map(p => ({
+      "เครื่อง": p.mc, "ชื่อ": p.name, "Checklist": p.checklist,
+      "ความถี่": p.freq, "PM ล่าสุด": p.last||"—",
+      "PM ครั้งถัดไป": p.next||"—", "สถานะ": PM_TH[p.status],
+    }));
+    exportRowsToXlsx(ctx, data, "PM Schedule", "PM_Schedule_" + new Date().toISOString().slice(0,10) + ".xlsx", { emptyMsg: "ไม่มีข้อมูลแผน PM" });
+  };
+
+  const saveNew = async (f) => {
+    await DATA.createPmSchedule(f);
+    await refresh();
+    ctx.toast("เพิ่มแผน PM สำเร็จ", "check");
+    setAdding(false);
+  };
+
+  const saveEdit = async (f) => {
+    await DATA.updatePmSchedule({ id: editing.id, checklist: f.checklist, frequency: f.frequency, nextPmDate: f.nextPmDate });
+    await refresh();
+    ctx.toast("แก้ไขแผน PM สำเร็จ", "check");
+    setEditing(null);
+    setSel(null);
+  };
+
   return (
     <div>
-      {sel && <PmDetailModal pm={sel} onClose={() => setSel(null)} />}
+      {sel && !editing && (
+        <PmDetailModal
+          pm={sel} ctx={ctx}
+          onClose={() => setSel(null)}
+          onEdit={() => setEditing(sel)}
+          onDeleted={() => { setSel(null); refresh(); }}
+          onCompleted={() => { setSel(null); refresh(); }}
+        />
+      )}
+      {adding && (
+        <PmFormModal
+          title="เพิ่มแผน PM ใหม่"
+          machines={Dw.machines}
+          initial={{ machineCode: Dw.machines[0]?.code || "", checklist: "", frequency: "Monthly", nextPmDate: "" }}
+          onSave={saveNew}
+          onClose={() => setAdding(false)}
+        />
+      )}
+      {editing && (
+        <PmFormModal
+          title={"แก้ไขแผน PM — " + editing.mc}
+          machines={null}
+          initial={{ machineCode: editing.mc, checklist: editing.checklist, frequency: editing.freq, nextPmDate: editing.next }}
+          onSave={saveEdit}
+          onClose={() => setEditing(null)}
+        />
+      )}
       <PageHead title="แผนบำรุงรักษาเชิงป้องกัน (PM Schedule)" sub="Preventive Maintenance — ติดตามรอบ PM ของเครื่องจักร" actions={
-      <button className="btn"><Icon name="download" size={15} /> ส่งออก</button>
-      } />
-      {overdue > 0 &&
-      <div className="card card-pad row gap-sm" style={{ background: "var(--red-bg)", border: "1px solid #f0c4c4", marginBottom: 16 }}>
-          <span style={{ color: "var(--red)" }}><Icon name="alert" size={18} /></span>
-          <span className="small" style={{ color: "var(--red-ink)", fontWeight: 600 }}>มี {overdue} เครื่องที่เกินกำหนด PM — ต้องดำเนินการทันที</span>
+        <div className="row gap-sm">
+          <button className="btn" onClick={doExport}><Icon name="download" size={15}/> ส่งออก</button>
+          <button className="btn btn-primary" onClick={() => setAdding(true)}><Icon name="plus" size={14}/> เพิ่มแผน PM</button>
         </div>
-      }
+      } />
+      {overdue > 0 && (
+        <div className="card card-pad row gap-sm" style={{ background:"var(--red-bg)", border:"1px solid #f0c4c4", marginBottom:16 }}>
+          <span style={{ color:"var(--red)" }}><Icon name="alert" size={18}/></span>
+          <span className="small" style={{ color:"var(--red-ink)", fontWeight:600 }}>มี {overdue} เครื่องที่เกินกำหนด PM — ต้องดำเนินการทันที</span>
+        </div>
+      )}
       <div className="panel">
-        <div className="panel-head wrap" style={{ gap: 10 }}>
+        <div className="panel-head wrap" style={{ gap:10 }}>
           <SearchBar value={q} onChange={setQ} placeholder="ค้นหาเครื่อง / checklist" />
-          <FilterChips value={st} onChange={setSt} opts={[["all", "ทั้งหมด"], ["Overdue", "เกินกำหนด"], ["Due Later", "ยังไม่ถึง"], ["Completed", "เสร็จแล้ว"]]} />
+          <FilterChips value={st} onChange={setSt} opts={[["all","ทั้งหมด"],["Overdue","เกินกำหนด"],["Due Later","ยังไม่ถึง"],["Completed","เสร็จแล้ว"]]} />
         </div>
         <div className="table-wrap">
           <table className="tbl">
             <thead><tr><th>เครื่อง</th><th>PM Checklist</th><th>ความถี่</th><th>PM ล่าสุด</th><th>PM ครั้งถัดไป</th><th>สถานะ</th><th></th></tr></thead>
             <tbody>
-              {rows.map((p) =>
-              <tr key={p.mc + p.checklist} className={p.status === "Overdue" ? "row-red" : ""} style={{ cursor:"pointer" }} onClick={() => setSel(p)}>
-                  <td><span className="mono small" style={{ fontWeight: 600 }}>{p.mc}</span><div className="tiny muted-2">{p.name}</div></td>
+              {rows.length === 0 && <tr><td colSpan={7} className="empty" style={{ textAlign:"center", padding:32 }}>ไม่มีแผน PM</td></tr>}
+              {rows.map((p) => (
+                <tr key={p.id} className={p.status==="Overdue"?"row-red":""} style={{ cursor:"pointer" }} onClick={() => setSel(p)}>
+                  <td><span className="mono small" style={{ fontWeight:600 }}>{p.mc}</span><div className="tiny muted-2">{p.name}</div></td>
                   <td className="small">{p.checklist}</td>
                   <td><span className="chip">{p.freq}</span></td>
-                  <td className="mono small muted">{p.last}</td>
-                  <td className="mono small" style={{ fontWeight: 600 }}>{p.next}</td>
-                  <td><span className={"badge " + PM_BADGE[p.status]}><span className="dot"></span>{PM_TH[p.status]}</span></td>
+                  <td className="mono small muted">{p.last||"—"}</td>
+                  <td className="mono small" style={{ fontWeight:600 }}>{p.next||"—"}</td>
+                  <td><span className={"badge "+PM_BADGE[p.status]}><span className="dot"></span>{PM_TH[p.status]}</span></td>
                   <td><Icon name="chevR" size={16} style={{ color:"var(--ink-3)" }}/></td>
                 </tr>
-              )}
+              ))}
             </tbody>
           </table>
         </div>
       </div>
-    </div>);
-
+    </div>
+  );
 }
 
 Object.assign(window, { RequestList, RequestDetail, VerifyQueue, ProductionVerify, PmSchedule, FilterChips, MiniStat });

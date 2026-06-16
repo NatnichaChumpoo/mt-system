@@ -55,7 +55,7 @@ async function buildData() {
        JOIN maintenance_requests mr ON mr.id = spu.request_id
        JOIN spare_parts sp ON sp.id = spu.part_id
        LEFT JOIN suppliers s ON s.id = sp.supplier_id`),
-    q(`SELECT m.code AS mc, m.name, pm.checklist, pm.frequency,
+    q(`SELECT pm.id, m.code AS mc, m.name, pm.checklist, pm.frequency,
               pm.last_pm_date, pm.next_pm_date, pm.completed
        FROM pm_schedules pm JOIN machines m ON m.id = pm.machine_id`),
     q(`SELECT id, full_name, email, role, phone, telegram_chat_id, is_active FROM app_users ORDER BY full_name`),
@@ -124,9 +124,9 @@ async function buildData() {
     });
   });
   D.pm = pm.map((p) => ({
-    mc:p.mc, name:p.name, checklist:p.checklist, freq:p.frequency,
+    id:p.id, mc:p.mc, name:p.name, checklist:p.checklist, freq:p.frequency,
     last:p.last_pm_date || "", next:p.next_pm_date || "",
-    status:p.completed ? "Completed" : (p.next_pm_date && p.next_pm_date < today() ? "Overdue" : "Due Later"),
+    status:p.completed && p.next_pm_date >= today() ? "Completed" : (p.next_pm_date && p.next_pm_date < today() ? "Overdue" : "Due Later"),
   }));
   D.users = users.map((u, i) => ({
     id:"U-" + String(i + 1).padStart(3, "0"), db_id:u.id, name:u.full_name,
@@ -676,6 +676,93 @@ app.put("/api/users/:id", async (req, res) => {
   } catch (e) {
     await conn.rollback();
     if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "อีเมลนี้มีในระบบแล้ว" });
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// ---------- helpers ----------
+function calcNextPmDate(fromDate, frequency) {
+  const d = new Date(fromDate);
+  if (frequency === "Daily")     d.setDate(d.getDate() + 1);
+  else if (frequency === "Weekly")    d.setDate(d.getDate() + 7);
+  else if (frequency === "Monthly")   d.setMonth(d.getMonth() + 1);
+  else if (frequency === "Quarterly") d.setMonth(d.getMonth() + 3);
+  else if (frequency === "Yearly")    d.setFullYear(d.getFullYear() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// ---------- WRITE: สร้างแผน PM ----------
+app.post("/api/pm-schedules", async (req, res) => {
+  const { machineCode, checklist, frequency, nextPmDate } = req.body || {};
+  if (!machineCode || !checklist || !frequency) return res.status(400).json({ error: "machineCode, checklist, frequency จำเป็นต้องระบุ" });
+  const conn = await pool.getConnection();
+  try {
+    const [[mc]] = await conn.query(`SELECT id FROM machines WHERE code = ?`, [machineCode]);
+    if (!mc) return res.status(404).json({ error: "ไม่พบเครื่อง: " + machineCode });
+    const id = crypto.randomUUID();
+    const next = nextPmDate || calcNextPmDate(today(), frequency);
+    await conn.query(
+      `INSERT INTO pm_schedules (id, machine_id, checklist, frequency, next_pm_date, completed) VALUES (?, ?, ?, ?, ?, FALSE)`,
+      [id, mc.id, checklist, frequency, next]
+    );
+    res.json({ ok: true, id });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// ---------- WRITE: แก้ไขแผน PM ----------
+app.put("/api/pm-schedules/:id", async (req, res) => {
+  const { id } = req.params;
+  const { checklist, frequency, nextPmDate } = req.body || {};
+  if (!checklist || !frequency) return res.status(400).json({ error: "checklist, frequency จำเป็นต้องระบุ" });
+  const conn = await pool.getConnection();
+  try {
+    const [[pm]] = await conn.query(`SELECT id FROM pm_schedules WHERE id = ?`, [id]);
+    if (!pm) return res.status(404).json({ error: "ไม่พบแผน PM" });
+    await conn.query(
+      `UPDATE pm_schedules SET checklist=?, frequency=?, next_pm_date=? WHERE id=?`,
+      [checklist, frequency, nextPmDate || null, id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// ---------- WRITE: ลบแผน PM ----------
+app.delete("/api/pm-schedules/:id", async (req, res) => {
+  const { id } = req.params;
+  const conn = await pool.getConnection();
+  try {
+    const [[pm]] = await conn.query(`SELECT id FROM pm_schedules WHERE id = ?`, [id]);
+    if (!pm) return res.status(404).json({ error: "ไม่พบแผน PM" });
+    await conn.query(`DELETE FROM pm_schedules WHERE id = ?`, [id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// ---------- WRITE: กดทำ PM เสร็จ ----------
+app.post("/api/pm-schedules/:id/complete", async (req, res) => {
+  const { id } = req.params;
+  const conn = await pool.getConnection();
+  try {
+    const [[pm]] = await conn.query(`SELECT frequency FROM pm_schedules WHERE id = ?`, [id]);
+    if (!pm) return res.status(404).json({ error: "ไม่พบแผน PM" });
+    const t = today();
+    const next = calcNextPmDate(t, pm.frequency);
+    await conn.query(
+      `UPDATE pm_schedules SET last_pm_date=?, next_pm_date=?, completed=TRUE WHERE id=?`,
+      [t, next, id]
+    );
+    res.json({ ok: true, last: t, next });
+  } catch (e) {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });
   } finally { conn.release(); }
