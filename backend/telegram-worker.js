@@ -172,21 +172,24 @@ async function checkPmAlerts() {
     console.log("[pm-upcoming] queued:", pm.mc, pm.next_pm_date);
   }
 
-  // --- เกินกำหนด (ส่งทุกวันจนกว่าจะกดเสร็จ) ---
+  // --- เกินกำหนด (ส่งวันแรกที่เกิน + ครั้งเดียวเมื่อเกิน 7 วัน) ---
   const overdue = await q(
     `SELECT pm.id, pm.checklist, pm.frequency, pm.next_pm_date,
             m.code AS mc, m.name, m.rank,
             DATEDIFF(CURDATE(), pm.next_pm_date) AS days_late
      FROM pm_schedules pm
      JOIN machines m ON m.id = pm.machine_id
-     WHERE pm.next_pm_date < CURDATE() AND pm.completed = FALSE`
+     WHERE pm.next_pm_date < CURDATE() AND pm.completed = FALSE
+     AND DATEDIFF(CURDATE(), pm.next_pm_date) <= 7`
   );
   for (const pm of overdue) {
-    const subject = `PM_OVERDUE:${pm.id}:${today}`;
+    const tag = pm.days_late <= 1 ? "DAY1" : "DAY7";
+    const subject = `PM_OVERDUE:${pm.id}:${pm.next_pm_date}:${tag}`;
     const existing = await q(`SELECT id FROM notification_log WHERE subject = ? LIMIT 1`, [subject]);
     if (existing.length > 0) continue;
+    const label = pm.days_late <= 1 ? "เกินกำหนดแล้ว" : "เกินกำหนด 7 วัน — โปรดดำเนินการด่วน";
     const msg =
-      `⚙️ <b>แจ้งเตือน PM เกินกำหนด</b>\n` +
+      `⚙️ <b>แจ้งเตือน PM — ${label}</b>\n` +
       `เครื่อง: ${pm.mc} — ${pm.name}\n` +
       `Checklist: ${pm.checklist}\n` +
       `กำหนดทำ: ${pm.next_pm_date} (เกิน ${pm.days_late} วัน)\n` +
@@ -195,7 +198,7 @@ async function checkPmAlerts() {
       `INSERT INTO notification_log (channel, recipient, subject, message) VALUES ('telegram', 'TEAM_CHAT', ?, ?)`,
       [subject, msg]
     );
-    console.log("[pm-overdue] queued:", pm.mc, pm.next_pm_date);
+    console.log("[pm-overdue]", tag, "queued:", pm.mc, pm.next_pm_date);
   }
   console.log(`[pm-alerts] upcoming:${upcoming.length} overdue:${overdue.length}`);
 }
