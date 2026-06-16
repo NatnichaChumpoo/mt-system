@@ -3,12 +3,16 @@ import express from "express";
 import cors from "cors";
 import crypto from "crypto";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 import { pool, q, getSafeDbConfig, verifyDbConnectionOnce } from "./db.js";
 dotenv.config();
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use("/assets", express.static(path.join(__dirname, "..", "assets")));
 
 const PORT = process.env.PORT || 3001;
 const today = () => new Date().toISOString().slice(0, 10);

@@ -1046,12 +1046,15 @@ function MonthlyReport({ ctx }) {
           <div className="print-report">
             {/* Header */}
             <div className="rpt-header">
-              <div>
-                <div className="rpt-title">รายงานงานซ่อมบำรุงประจำเดือน</div>
-                <div className="rpt-subtitle">Monthly Maintenance Report — {periodLabel}</div>
+              <div className="rpt-header-left">
+                <img src="/assets/logo.png" alt="CAR Logo" className="rpt-logo" />
+                <div>
+                  <div className="rpt-company">Complete Auto Rubber Manufacturing Co., Ltd.</div>
+                  <div className="rpt-title">รายงานงานซ่อมบำรุงประจำเดือน</div>
+                  <div className="rpt-subtitle">Monthly Maintenance Report — {periodLabel}</div>
+                </div>
               </div>
               <div className="rpt-meta">
-                <div style={{ fontWeight:600 }}>บริษัท ซี.เอ.อาร์. ไทยแลนด์ จำกัด</div>
                 <div className="rpt-meta-small">วันที่พิมพ์: {fmtDate(new Date().toISOString())}</div>
                 <div className="rpt-meta-small">จัดทำโดย: ระบบ MT</div>
               </div>
@@ -1169,7 +1172,7 @@ function MonthlyReport({ ctx }) {
             </div>
 
             <div className="rpt-footer">
-              ระบบ MT — CAR Thailand &nbsp;|&nbsp; {periodLabel} &nbsp;|&nbsp; พิมพ์: {fmtDate(new Date().toISOString())}
+              Complete Auto Rubber Manufacturing Co., Ltd. &nbsp;|&nbsp; {periodLabel} &nbsp;|&nbsp; พิมพ์: {fmtDate(new Date().toISOString())}
             </div>
           </div>
         );
