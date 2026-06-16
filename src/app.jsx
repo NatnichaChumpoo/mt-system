@@ -25,6 +25,7 @@ const SCREENS = {
   d_pohistory: { comp: POHistory, shell: "desktop" },
   d_stock: { comp: StockInOut, shell: "desktop" },
   d_dashboard: { comp: Dashboard, shell: "desktop" },
+  d_reliability: { comp: ReliabilityDashboard, shell: "desktop" },
   d_admin: { comp: Admin, shell: "desktop" }
 };
 
@@ -45,7 +46,7 @@ const NAV = {
     ["คลังอะไหล่", [["d_master", "Master Data", "box"], ["d_reorder", "รายการสั่งซื้อ", "truck"], ["d_pohistory", "ประวัติใบสั่งซื้อ", "clock"], ["d_stock", "รับเข้า/เบิกออก", "download"]]]]
   },
   "Manager": { home: "d_dashboard", menu: [
-    ["ภาพรวมบริหาร", [["d_dashboard", "Dashboard KPI", "gauge"]]]]
+    ["ภาพรวมบริหาร", [["d_dashboard", "Dashboard KPI", "gauge"], ["d_reliability", "Reliability Analysis", "chart"]]]]
   },
   "Admin": { home: "d_admin", menu: [
     ["จัดการระบบ", [["d_admin", "Master Data / Users", "cog"]]]]

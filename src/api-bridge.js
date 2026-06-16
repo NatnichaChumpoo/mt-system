@@ -335,6 +335,13 @@
     if (!res.ok) throw new Error(j.error || "save failed");
     return j;
   };
+  DATA.loadReliability = async (months = 6) => {
+    const res = await fetch(API + `/api/reliability?months=${months}`);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "load reliability failed");
+    DATA.reliability = j;
+    return j;
+  };
   DATA.refresh = load;
 
   /* ---------- auto-poll: ตรวจสถานะใบแจ้งซ่อม / คลังอะไหล่เปลี่ยน ---------- */

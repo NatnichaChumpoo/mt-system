@@ -681,6 +681,81 @@ app.put("/api/users/:id", async (req, res) => {
   } finally { conn.release(); }
 });
 
+// ---------- READ: Reliability Analysis ----------
+app.get("/api/reliability", async (req, res) => {
+  const months = Math.min(Math.max(Number(req.query.months) || 6, 1), 12);
+  const conn = await pool.getConnection();
+  try {
+    const [pareto] = await conn.query(
+      `SELECT m.code, m.name, m.rank, m.status,
+              COUNT(*) AS breakdown_count,
+              ROUND(SUM(r.downtime_hours), 2) AS total_downtime,
+              ROUND(AVG(r.downtime_hours), 2) AS avg_downtime
+       FROM maintenance_requests r
+       JOIN machines m ON m.id = r.machine_id
+       WHERE r.breakdown_start >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+       GROUP BY m.id ORDER BY breakdown_count DESC LIMIT 10`,
+      [months]
+    );
+    const [trend] = await conn.query(
+      `SELECT DATE_FORMAT(breakdown_start,'%Y-%m') AS month,
+              COUNT(*) AS breakdowns,
+              ROUND(SUM(downtime_hours),2) AS total_downtime
+       FROM maintenance_requests
+       WHERE breakdown_start >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+       GROUP BY month ORDER BY month`,
+      [months]
+    );
+    const [rootCause] = await conn.query(
+      `SELECT pc.name AS category, COUNT(*) AS count
+       FROM repair_actions ra
+       JOIN problem_categories pc ON pc.id = ra.problem_category_id
+       JOIN maintenance_requests r ON r.id = ra.request_id
+       WHERE r.breakdown_start >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+       GROUP BY pc.id ORDER BY count DESC`,
+      [months]
+    );
+    const [mtbfPerMachine] = await conn.query(
+      `SELECT m.code, m.name, m.rank,
+              COUNT(*) AS breakdowns,
+              ROUND(SUM(r.downtime_hours),2) AS total_downtime,
+              ROUND(AVG(r.downtime_hours),2) AS mttr,
+              ROUND((? * 30 * 24 - COALESCE(SUM(r.downtime_hours),0)) / NULLIF(COUNT(*),0), 1) AS mtbf
+       FROM maintenance_requests r
+       JOIN machines m ON m.id = r.machine_id
+       WHERE r.breakdown_start >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+       GROUP BY m.id ORDER BY breakdowns DESC`,
+      [months, months]
+    );
+    const [repeatFailure] = await conn.query(
+      `SELECT m.code, m.name, m.rank, pc.name AS category, COUNT(*) AS repeat_count
+       FROM repair_actions ra
+       JOIN maintenance_requests r ON r.id = ra.request_id
+       JOIN machines m ON m.id = r.machine_id
+       JOIN problem_categories pc ON pc.id = ra.problem_category_id
+       WHERE r.breakdown_start >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+       GROUP BY m.id, pc.id HAVING repeat_count > 1
+       ORDER BY repeat_count DESC`,
+      [months]
+    );
+    const [costPerMachine] = await conn.query(
+      `SELECT m.code, m.name, m.rank,
+              COUNT(DISTINCT r.id) AS repairs,
+              ROUND(SUM(spu.total_cost), 2) AS parts_cost
+       FROM maintenance_requests r
+       JOIN machines m ON m.id = r.machine_id
+       JOIN spare_part_usage spu ON spu.request_id = r.id
+       WHERE r.breakdown_start >= DATE_SUB(NOW(), INTERVAL ? MONTH)
+       GROUP BY m.id ORDER BY parts_cost DESC`,
+      [months]
+    );
+    res.json({ pareto, trend, rootCause, mtbfPerMachine, repeatFailure, costPerMachine, months });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
 // ---------- helpers ----------
 function calcNextPmDate(fromDate, frequency) {
   const d = new Date(fromDate);

@@ -799,4 +799,190 @@ function TestQRModal({ onClose }) {
   );
 }
 
-Object.assign(window, { Dashboard, Admin, AlertRow });
+/* ---------------- Reliability Analysis ---------------- */
+function ReliabilityDashboard({ ctx }) {
+  const [months, setMonths] = React.useState(6);
+  const [data, setData] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+
+  React.useEffect(() => {
+    setLoading(true);
+    DATA.loadReliability(months)
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  }, [months]);
+
+  const doExport = () => {
+    if (!data) return;
+    const { pareto=[], mtbfPerMachine=[], repeatFailure=[], costPerMachine=[] } = data;
+    const rows = pareto.map(p => ({
+      "เครื่อง": p.code, "ชื่อ": p.name, "Rank": p.rank,
+      "Breakdown (ครั้ง)": p.breakdown_count,
+      "Total Downtime (ชม.)": p.total_downtime||0,
+      "Avg Downtime (ชม.)": p.avg_downtime||0,
+    }));
+    exportRowsToXlsx(ctx, rows, "Pareto", `Reliability_${months}M_${new Date().toISOString().slice(0,10)}.xlsx`, { emptyMsg:"ไม่มีข้อมูล" });
+  };
+
+  if (loading) return <div style={{ padding:40, textAlign:"center" }} className="muted">กำลังโหลดข้อมูล…</div>;
+  if (error)   return <div style={{ padding:40, textAlign:"center", color:"var(--red)" }}>โหลดข้อมูลไม่สำเร็จ: {error}</div>;
+
+  const { pareto=[], trend=[], rootCause=[], mtbfPerMachine=[], repeatFailure=[], costPerMachine=[] } = data || {};
+  const maxBreak = pareto[0]?.breakdown_count || 1;
+  const maxTrend = Math.max(...trend.map(t => t.total_downtime||0), 1);
+  const totalRC   = rootCause.reduce((s,r) => s+r.count, 0) || 1;
+  const maxCost   = costPerMachine[0]?.parts_cost || 1;
+  const RC_COLORS = ["var(--accent)","var(--green)","var(--amber)","var(--red)","#a78bfa"];
+  const MONTH_TH  = {"01":"ม.ค.","02":"ก.พ.","03":"มี.ค.","04":"เม.ย.","05":"พ.ค.",
+    "06":"มิ.ย.","07":"ก.ค.","08":"ส.ค.","09":"ก.ย.","10":"ต.ค.","11":"พ.ย.","12":"ธ.ค."};
+  const fmtMonth = (ym) => { const [,m] = ym.split("-"); return MONTH_TH[m]||ym; };
+
+  return (
+    <div>
+      <PageHead title="Reliability Analysis"
+        sub={`วิเคราะห์ความน่าเชื่อถือเครื่องจักร — ย้อนหลัง ${months} เดือน`}
+        actions={
+          <div className="row gap-sm">
+            <select className="select" style={{ width:"auto" }} value={months} onChange={e=>setMonths(Number(e.target.value))}>
+              <option value={1}>1 เดือน</option>
+              <option value={3}>3 เดือน</option>
+              <option value={6}>6 เดือน</option>
+              <option value={12}>12 เดือน</option>
+            </select>
+            <button className="btn" onClick={doExport}><Icon name="download" size={15}/> Export Excel</button>
+          </div>
+        }
+      />
+
+      {/* ===== 1) Pareto ===== */}
+      <SectionHead icon="chart" title="Pareto — เครื่องที่เสียบ่อยสุด" sub="เรียงตามจำนวนครั้งที่เกิด Breakdown" />
+      <div className="panel" style={{ marginBottom:20 }}>
+        <div style={{ padding:"16px 20px", display:"grid", gap:10 }}>
+          {pareto.length===0 && <div className="muted small" style={{ textAlign:"center", padding:24 }}>ยังไม่มีข้อมูลใบแจ้งซ่อม</div>}
+          {pareto.map((p,i) => (
+            <div key={p.code} style={{ display:"grid", gridTemplateColumns:"100px 1fr 90px 70px", alignItems:"center", gap:12 }}>
+              <div><div className="mono small" style={{ fontWeight:700 }}>{p.code}</div><div className="tiny muted-2">{p.name}</div></div>
+              <div style={{ background:"var(--bg)", borderRadius:6, height:18, overflow:"hidden" }}>
+                <div style={{ width:Math.round(p.breakdown_count/maxBreak*100)+"%", height:"100%", background:i===0?"var(--red)":i<=2?"var(--amber)":"var(--accent)", borderRadius:6, transition:"width .4s" }}/>
+              </div>
+              <div className="mono small" style={{ textAlign:"right", fontWeight:600 }}>{p.breakdown_count} ครั้ง</div>
+              <RankPill rank={p.rank}/>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ===== 2) Downtime Trend + Root Cause ===== */}
+      <div className="grid" style={{ gridTemplateColumns:"1.4fr 1fr", gap:16, marginBottom:20, alignItems:"start" }}>
+        <div className="panel">
+          <div className="panel-head"><div><div className="h-sm">Downtime Trend รายเดือน</div><div className="tiny muted-2" style={{ marginTop:3 }}>ชั่วโมงหยุดเครื่องรวม {months} เดือนล่าสุด</div></div></div>
+          <div style={{ padding:"16px 20px" }}>
+            {trend.length===0 && <div className="muted small" style={{ textAlign:"center", padding:24 }}>ยังไม่มีข้อมูล</div>}
+            <div style={{ display:"flex", alignItems:"flex-end", gap:10, height:140 }}>
+              {trend.map(t => (
+                <div key={t.month} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+                  <div className="tiny mono muted" style={{ fontWeight:600 }}>{t.total_downtime||0}</div>
+                  <div style={{ width:"100%", background:(t.total_downtime||0)===maxTrend?"var(--red)":"var(--accent)", borderRadius:"4px 4px 0 0",
+                    height:Math.max(Math.round((t.total_downtime||0)/maxTrend*100),4)+"px", transition:"height .4s" }}/>
+                  <div className="tiny muted-2">{fmtMonth(t.month)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="panel">
+          <div className="panel-head"><div><div className="h-sm">Root Cause Breakdown</div><div className="tiny muted-2" style={{ marginTop:3 }}>สาเหตุการเสียจากบันทึกซ่อม</div></div></div>
+          <div style={{ padding:"16px 20px", display:"grid", gap:10 }}>
+            {rootCause.length===0 && <div className="muted small" style={{ textAlign:"center", padding:24 }}>ยังไม่มีข้อมูลบันทึกซ่อม</div>}
+            {rootCause.map((r,i) => (
+              <div key={r.category} style={{ display:"grid", gridTemplateColumns:"1fr auto", alignItems:"center", gap:10 }}>
+                <div>
+                  <div className="small" style={{ marginBottom:4 }}><span style={{ display:"inline-block", width:10, height:10, borderRadius:"50%", background:RC_COLORS[i], marginRight:6 }}/>{r.category}</div>
+                  <div style={{ background:"var(--bg)", borderRadius:4, height:8, overflow:"hidden" }}>
+                    <div style={{ width:Math.round(r.count/totalRC*100)+"%", height:"100%", background:RC_COLORS[i], borderRadius:4 }}/>
+                  </div>
+                </div>
+                <div className="mono small" style={{ fontWeight:700 }}>{Math.round(r.count/totalRC*100)}%</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ===== 3) Repeat Failure + Cost Analysis ===== */}
+      <div className="grid" style={{ gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:20, alignItems:"start" }}>
+        {/* Repeat Failure */}
+        <div className="panel">
+          <div className="panel-head">
+            <div><div className="h-sm">Repeat Failure</div><div className="tiny muted-2" style={{ marginTop:3 }}>เครื่องที่เสียปัญหาเดิมซ้ำ &gt; 1 ครั้ง</div></div>
+            {repeatFailure.length>0 && <span className="badge b-red">{repeatFailure.length} รายการ</span>}
+          </div>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>เครื่อง</th><th>สาเหตุ</th><th className="num">ซ้ำ</th><th>Rank</th></tr></thead>
+              <tbody>
+                {repeatFailure.length===0 && <tr><td colSpan={4} className="empty" style={{ textAlign:"center", padding:24 }}>ไม่พบปัญหาซ้ำในช่วงนี้ ✓</td></tr>}
+                {repeatFailure.map((r,i) => (
+                  <tr key={i}>
+                    <td><span className="mono small" style={{ fontWeight:700 }}>{r.code}</span><div className="tiny muted-2">{r.name}</div></td>
+                    <td className="small">{r.category}</td>
+                    <td className="num mono" style={{ color:"var(--red)", fontWeight:700 }}>{r.repeat_count}x</td>
+                    <td><RankPill rank={r.rank}/></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Cost Analysis */}
+        <div className="panel">
+          <div className="panel-head"><div><div className="h-sm">Cost Analysis — ค่าอะไหล่รายเครื่อง</div><div className="tiny muted-2" style={{ marginTop:3 }}>มูลค่าอะไหล่ที่ใช้ซ่อมในช่วงนี้</div></div></div>
+          <div style={{ padding:"16px 20px", display:"grid", gap:10 }}>
+            {costPerMachine.length===0 && <div className="muted small" style={{ textAlign:"center", padding:24 }}>ยังไม่มีข้อมูลการใช้อะไหล่</div>}
+            {costPerMachine.map((c,i) => (
+              <div key={c.code} style={{ display:"grid", gridTemplateColumns:"100px 1fr 100px", alignItems:"center", gap:10 }}>
+                <div><div className="mono small" style={{ fontWeight:700 }}>{c.code}</div><div className="tiny muted-2">{c.repairs} ครั้งซ่อม</div></div>
+                <div style={{ background:"var(--bg)", borderRadius:4, height:14, overflow:"hidden" }}>
+                  <div style={{ width:Math.round(c.parts_cost/maxCost*100)+"%", height:"100%", background:i===0?"var(--red)":i<=2?"var(--amber)":"var(--green)", borderRadius:4 }}/>
+                </div>
+                <div className="mono small" style={{ textAlign:"right", fontWeight:600 }}>{Dd.fmtMoney(c.parts_cost)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ===== 4) MTBF/MTTR per machine ===== */}
+      <SectionHead icon="gauge" title="MTBF / MTTR รายเครื่อง" sub={`ย้อนหลัง ${months} เดือน — Mean Time Between Failures · Mean Time To Repair`} />
+      <div className="panel">
+        <div className="table-wrap">
+          <table className="tbl">
+            <thead><tr><th>เครื่อง</th><th>Rank</th><th className="num">Breakdown</th><th className="num">Total Downtime</th><th className="num">MTTR (ชม.)</th><th className="num">MTBF (ชม.)</th><th>ความเสี่ยง</th></tr></thead>
+            <tbody>
+              {mtbfPerMachine.length===0 && <tr><td colSpan={7} className="empty" style={{ textAlign:"center", padding:32 }}>ไม่มีข้อมูล Breakdown ในช่วงนี้</td></tr>}
+              {mtbfPerMachine.map(m => {
+                const riskCls = m.rank==="A"?"b-red":m.rank==="B"?"b-amber":"b-blue";
+                const risk    = m.rank==="A"?"HIGH":m.rank==="B"?"MEDIUM":"LOW";
+                return (
+                  <tr key={m.code}>
+                    <td><span className="mono small" style={{ fontWeight:700 }}>{m.code}</span><div className="tiny muted-2">{m.name}</div></td>
+                    <td><RankPill rank={m.rank}/></td>
+                    <td className="num mono">{m.breakdowns}</td>
+                    <td className="num mono">{m.total_downtime||"—"} ชม.</td>
+                    <td className="num mono">{m.mttr||"—"}</td>
+                    <td className="num mono">{m.mtbf||"—"}</td>
+                    <td><span className={"badge "+riskCls}>{risk}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { Dashboard, Admin, AlertRow, ReliabilityDashboard });
