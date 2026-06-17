@@ -695,38 +695,63 @@ function Admin({ ctx }) {
       )}
 
       {qr && (() => {
-        const qrUrl = window.location.origin + window.location.pathname + "?mc=" + qr.code;
-        const doDownload = () => {
+        const base = window.location.origin + window.location.pathname;
+        const qrRepair = base + "?mc=" + qr.code;
+        const qrCheck  = base + "?mc=" + qr.code + "&check=1";
+        const downloadQR = (url, filename, color) => {
           if (!window.QRCode) { alert("QR library ยังไม่โหลด"); return; }
           const tmp = document.createElement("div");
           tmp.style.cssText = "position:fixed;left:-9999px";
           document.body.appendChild(tmp);
-          new window.QRCode(tmp, { text: qrUrl, width: 400, height: 400,
-            colorDark: "#000000", colorLight: "#ffffff",
+          new window.QRCode(tmp, { text: url, width: 400, height: 400,
+            colorDark: color || "#000000", colorLight: "#ffffff",
             correctLevel: window.QRCode.CorrectLevel.M });
           setTimeout(() => {
             const canvas = tmp.querySelector("canvas");
-            if (canvas) { const a = document.createElement("a"); a.href = canvas.toDataURL("image/png"); a.download = "QR-" + qr.code + ".png"; a.click(); }
+            if (canvas) { const a = document.createElement("a"); a.href = canvas.toDataURL("image/png"); a.download = filename; a.click(); }
             document.body.removeChild(tmp);
           }, 100);
         };
         return (
-        <Modal title={"QR Code — "+qr.code} onClose={()=>setQr(null)}>
-          <div className="col" style={{alignItems:"center", gap:16, padding:"8px 0"}}>
-            <QRBox size={200} value={qrUrl} />
-            <div style={{textAlign:"center"}}>
-              <div className="mono" style={{fontWeight:700, fontSize:18}}>{qr.code}</div>
+        <Modal title={"QR Code — "+qr.code} onClose={()=>setQr(null)} wide>
+          <div style={{padding:"4px 0 8px"}}>
+            <div style={{textAlign:"center", marginBottom:20}}>
+              <div className="mono" style={{fontWeight:700, fontSize:20}}>{qr.code}</div>
               <div className="small muted">{qr.name}</div>
             </div>
-            <div className="card card-pad small" style={{width:"100%", background:"var(--surface-2)"}}>
-              <div style={{fontWeight:600, marginBottom:4}}>ติด QR นี้ที่หน้าเครื่อง</div>
-              <div className="muted tiny mono" style={{wordBreak:"break-all"}}>{qrUrl}</div>
-              <div className="small muted" style={{marginTop:6}}>สแกนด้วยมือถือ → เปิดหน้าแจ้งซ่อม <strong>{qr.code}</strong> ทันที</div>
+            {/* Two QR side by side */}
+            <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:20}}>
+              {/* QR แจ้งซ่อม */}
+              <div className="card" style={{padding:16, textAlign:"center", border:"2px solid var(--red-light,#fca5a5)"}}>
+                <div style={{fontSize:12, fontWeight:700, color:"#9f1239", marginBottom:10, letterSpacing:".04em"}}>🔧 QR แจ้งซ่อม</div>
+                <QRBox size={160} value={qrRepair} />
+                <div className="tiny muted" style={{marginTop:8, wordBreak:"break-all"}}>{qrRepair}</div>
+                <div className="tiny muted" style={{marginTop:4}}>สแกน → หน้าข้อมูลเครื่อง / แจ้งซ่อม</div>
+                <button className="btn btn-sm" style={{marginTop:12, width:"100%", fontSize:12}}
+                  onClick={() => downloadQR(qrRepair, "QR-repair-"+qr.code+".png", "#9f1239")}>
+                  <Icon name="download" size={13}/> ดาวน์โหลด
+                </button>
+              </div>
+              {/* QR เช็คประจำวัน */}
+              <div className="card" style={{padding:16, textAlign:"center", border:"2px solid #86efac"}}>
+                <div style={{fontSize:12, fontWeight:700, color:"#166534", marginBottom:10, letterSpacing:".04em"}}>✅ QR เช็คประจำวัน</div>
+                <QRBox size={160} value={qrCheck} />
+                <div className="tiny muted" style={{marginTop:8, wordBreak:"break-all"}}>{qrCheck}</div>
+                <div className="tiny muted" style={{marginTop:4}}>สแกน → ฟอร์มตรวจความพร้อม</div>
+                <button className="btn btn-sm" style={{marginTop:12, width:"100%", fontSize:12}}
+                  onClick={() => downloadQR(qrCheck, "QR-check-"+qr.code+".png", "#166534")}>
+                  <Icon name="download" size={13}/> ดาวน์โหลด
+                </button>
+              </div>
             </div>
-            <div className="row gap-sm" style={{width:"100%"}}>
-              <button className="btn btn-block" onClick={doDownload}><Icon name="download" size={15}/> ดาวน์โหลด PNG</button>
-              <button className="btn btn-primary btn-block" onClick={()=>setQr(null)}>เสร็จสิ้น</button>
+            <div className="card card-pad small" style={{background:"var(--surface-2)", marginBottom:16}}>
+              <div style={{fontWeight:600, marginBottom:4}}>วิธีใช้งาน</div>
+              <div className="muted tiny" style={{lineHeight:1.6}}>
+                ติด <b>QR แจ้งซ่อม (สีแดง)</b> ที่หน้าเครื่องสำหรับพนักงานแจ้งปัญหา<br/>
+                ติด <b>QR เช็คประจำวัน (สีเขียว)</b> แยกสำหรับการตรวจรายวันรอบ 08:00–08:30 น.
+              </div>
             </div>
+            <button className="btn btn-primary btn-block" onClick={()=>setQr(null)}>เสร็จสิ้น</button>
           </div>
         </Modal>
         );
