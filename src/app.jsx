@@ -27,16 +27,20 @@ const SCREENS = {
   d_dashboard: { comp: Dashboard, shell: "desktop" },
   d_reliability: { comp: ReliabilityDashboard, shell: "desktop" },
   d_monthly_report: { comp: MonthlyReport, shell: "desktop" },
+  d_check_status: { comp: DailyCheckStatus, shell: "desktop" },
+  m_checkin: { comp: DailyCheckIn, field: true, title: "เช็คความพร้อมเครื่องจักร", sub: "บันทึกผลตรวจประจำวัน", back: true, wide: false },
   d_admin: { comp: Admin, shell: "desktop" }
 };
 
 /* ---- per-role navigation (all desktop web) ---- */
 const NAV = {
   "Operator": { home: "m_machine", menu: [
-    ["แจ้งซ่อม", [["m_machine", "เครื่องจักร (QR)", "machine"], ["m_requests", "ใบแจ้งของฉัน", "list"], ["m_history", "ประวัติการแจ้งซ่อมล่าสุด", "clock"]]]]
+    ["แจ้งซ่อม", [["m_machine", "เครื่องจักร (QR)", "machine"], ["m_requests", "ใบแจ้งของฉัน", "list"], ["m_history", "ประวัติการแจ้งซ่อมล่าสุด", "clock"]]],
+    ["เช็คประจำวัน", [["m_checkin", "เช็คความพร้อมเครื่อง", "checkCircle"]]]]
   },
   "Maintenance": { home: "m_queue", menu: [
     ["งานซ่อมบำรุง", [["m_queue", "คิวงานซ่อม", "wrench"], ["d_requests", "ใบแจ้งซ่อมทั้งหมด", "list"], ["d_pm", "แผน PM", "cal"]]],
+    ["เช็คประจำวัน", [["d_check_status", "สถานะเช็คเครื่อง", "checkCircle"]]],
     ["จัดการข้อมูล", [["d_admin", "จัดการเครื่องจักร", "machine"]]],
     ["ภาพรวม", [["d_dashboard", "Dashboard", "gauge"]]]]
   },
@@ -47,7 +51,8 @@ const NAV = {
     ["คลังอะไหล่", [["d_master", "Master Data", "box"], ["d_reorder", "รายการสั่งซื้อ", "truck"], ["d_pohistory", "ประวัติใบสั่งซื้อ", "clock"], ["d_stock", "รับเข้า/เบิกออก", "download"]]]]
   },
   "Manager": { home: "d_dashboard", menu: [
-    ["ภาพรวมบริหาร", [["d_dashboard", "Dashboard KPI", "gauge"], ["d_reliability", "Reliability Analysis", "chart"], ["d_monthly_report", "รายงานประจำเดือน", "download"]]]]
+    ["ภาพรวมบริหาร", [["d_dashboard", "Dashboard KPI", "gauge"], ["d_reliability", "Reliability Analysis", "chart"], ["d_monthly_report", "รายงานประจำเดือน", "download"]]],
+    ["เช็คประจำวัน", [["d_check_status", "สถานะเช็คเครื่อง", "checkCircle"]]]]
   },
   "Admin": { home: "d_admin", menu: [
     ["จัดการระบบ", [["d_admin", "Master Data / Users", "cog"]]]]
@@ -84,8 +89,10 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 function App() {
   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
   /* อ่าน ?mc= จาก URL เมื่อสแกน QR */
-  const initialMC = new URLSearchParams(window.location.search).get("mc") || null;
-  const [screen, setScreen] = uS(() => initialMC ? "m_machine" : "login");
+  const _qs = new URLSearchParams(window.location.search);
+  const initialMC = _qs.get("mc") || null;
+  const initialCheckMode = _qs.get("check") === "1";
+  const [screen, setScreen] = uS(() => initialMC ? (initialCheckMode ? "m_checkin" : "m_machine") : "login");
   const [params, setParams] = uS(() => initialMC ? { mc: initialMC } : {});
   const [role, setRole] = uS("Operator");
   const [stack, setStack] = uS([]);
@@ -215,6 +222,7 @@ function App() {
               s === "d_requests" && screen === "d_detail" && role !== "Production" ||
               s === "m_machine" && screen === "m_report" ||
               s === "m_machine" && screen === "m_lowpart" ||
+              s === "m_checkin" && screen === "m_checkin" ||
               s === "m_queue" && screen === "m_repair" ||
               s === "m_requests" && screen === "m_detail";
               return (
@@ -302,7 +310,8 @@ function screenTitle(s, meta) {
   if (meta && meta.field) return meta.title;
   const m = { d_requests: "ใบแจ้งซ่อม", d_detail: "รายละเอียดใบแจ้ง", d_verify: "ตรวจรับงาน", d_prodverify: "ตรวจสอบใบแจ้งซ่อม (ฝ่ายผลิต)", d_pm: "แผน PM",
     d_master: "คลังอะไหล่ Master Data", d_reorder: "รายการสั่งซื้อ", d_pohistory: "ประวัติใบสั่งซื้อ", d_stock: "รับเข้า/เบิกออก",
-    d_dashboard: "Dashboard ผู้บริหาร", d_admin: "ผู้ดูแลระบบ" };
+    d_dashboard: "Dashboard ผู้บริหาร", d_admin: "ผู้ดูแลระบบ",
+    d_check_status: "สถานะเช็คเครื่องประจำวัน" };
   return m[s] || "";
 }
 

@@ -933,6 +933,197 @@ app.post("/api/pm-schedules/:id/complete", async (req, res) => {
   } finally { conn.release(); }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// DAILY MACHINE CHECK API
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/check/template/:machine_code — template items สำหรับเครื่อง
+app.get("/api/check/template/:machine_code", async (req, res) => {
+  const { machine_code } = req.params;
+  const conn = await pool.getConnection();
+  try {
+    const [[mc]] = await conn.query(
+      `SELECT m.code, m.name, m.line_group, m.check_template_type_id,
+              t.name AS template_type_name
+       FROM machines m
+       LEFT JOIN check_template_types t ON t.id = m.check_template_type_id
+       WHERE m.code = ?`, [machine_code]
+    );
+    if (!mc) return res.status(404).json({ error: "ไม่พบเครื่อง: " + machine_code });
+    if (!mc.check_template_type_id) return res.status(400).json({ error: "เครื่องนี้ไม่มี template เช็ค" });
+    const [items] = await conn.query(
+      `SELECT id, seq_label, item_desc, standard_criteria, method, sort_order
+       FROM check_template_items
+       WHERE template_type_id = ?
+       ORDER BY sort_order`, [mc.check_template_type_id]
+    );
+    res.json({ machine: mc, items });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// GET /api/check/record/:machine_code/:date — ดูผลเช็คที่บันทึกไว้แล้ว
+app.get("/api/check/record/:machine_code/:date", async (req, res) => {
+  const { machine_code, date } = req.params;
+  const conn = await pool.getConnection();
+  try {
+    const [[record]] = await conn.query(
+      `SELECT id, machine_code, check_date, operator_name, scanned_at,
+              submitted_at, status, auto_request_id
+       FROM daily_check_records
+       WHERE machine_code = ? AND check_date = ?`, [machine_code, date]
+    );
+    if (!record) return res.json({ record: null, results: [] });
+    const [results] = await conn.query(
+      `SELECT cr.id, cr.item_id, cr.result, cr.ticked_at, cr.remarks,
+              ci.seq_label, ci.item_desc, ci.standard_criteria, ci.method
+       FROM daily_check_results cr
+       JOIN check_template_items ci ON ci.id = cr.item_id
+       WHERE cr.record_id = ?
+       ORDER BY ci.sort_order`, [record.id]
+    );
+    res.json({ record, results });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// GET /api/check/status?date=YYYY-MM-DD — สถานะรายวันแยกตาม line
+app.get("/api/check/status", async (req, res) => {
+  const date = req.query.date || today();
+  const conn = await pool.getConnection();
+  try {
+    const [machines] = await conn.query(
+      `SELECT m.code, m.name, m.line_group,
+              r.id AS record_id, r.status AS check_status,
+              r.operator_name, r.submitted_at,
+              (SELECT COUNT(*) FROM daily_check_results cr2
+               WHERE cr2.record_id = r.id AND cr2.result IN ('W','F')) AS problem_count
+       FROM machines m
+       LEFT JOIN daily_check_records r ON r.machine_code = m.code AND r.check_date = ?
+       WHERE m.line_group IS NOT NULL
+       ORDER BY m.line_group, m.code`, [date]
+    );
+    const [approvals] = await conn.query(
+      `SELECT line_group, approver_role, approver_name, approved_at, notes
+       FROM daily_check_approvals
+       WHERE check_date = ?`, [date]
+    );
+    const approvalMap = {};
+    for (const a of approvals) {
+      if (!approvalMap[a.line_group]) approvalMap[a.line_group] = {};
+      approvalMap[a.line_group][a.approver_role] = { approver_name: a.approver_name, approved_at: a.approved_at, notes: a.notes };
+    }
+    const lines = {};
+    for (const m of machines) {
+      const lg = m.line_group;
+      if (!lines[lg]) lines[lg] = { total: 0, submitted: 0, machines: [], approvals: approvalMap[lg] || {} };
+      lines[lg].total++;
+      if (m.check_status === "submitted" || m.check_status === "approved") lines[lg].submitted++;
+      lines[lg].machines.push({
+        code: m.code, name: m.name,
+        status: m.check_status || "pending",
+        operator_name: m.operator_name,
+        submitted_at: m.submitted_at,
+        has_problem: (m.problem_count || 0) > 0
+      });
+    }
+    res.json({ date, lines });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// POST /api/check/submit — บันทึกผลเช็ค (สร้างใบแจ้งซ่อมอัตโนมัติถ้ามีปัญหา)
+app.post("/api/check/submit", async (req, res) => {
+  const { machine_code, check_date, operator_name, results } = req.body || {};
+  if (!machine_code || !check_date || !Array.isArray(results) || results.length === 0)
+    return res.status(400).json({ error: "machine_code, check_date, results จำเป็น" });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[mc]] = await conn.query("SELECT id, name, `rank` FROM machines WHERE code = ?", [machine_code]);
+    if (!mc) { await conn.rollback(); return res.status(404).json({ error: "ไม่พบเครื่อง" }); }
+    const recordId = crypto.randomUUID();
+    const now = new Date();
+    await conn.query(
+      `INSERT INTO daily_check_records (id, machine_code, check_date, operator_name, scanned_at, submitted_at, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'submitted')
+       ON DUPLICATE KEY UPDATE operator_name=VALUES(operator_name), submitted_at=VALUES(submitted_at), status='submitted'`,
+      [recordId, machine_code, check_date, operator_name || null, now, now]
+    );
+    const [[saved]] = await conn.query(
+      `SELECT id FROM daily_check_records WHERE machine_code=? AND check_date=?`, [machine_code, check_date]
+    );
+    const actualRecordId = saved.id;
+    await conn.query(`DELETE FROM daily_check_results WHERE record_id = ?`, [actualRecordId]);
+    for (const r of results) {
+      await conn.query(
+        `INSERT INTO daily_check_results (record_id, item_id, result, ticked_at, remarks)
+         VALUES (?, ?, ?, ?, ?)`,
+        [actualRecordId, r.item_id, r.result, now, r.remarks || null]
+      );
+    }
+    const problems = results.filter(r => r.result === "W" || r.result === "F");
+    let auto_request_id = null;
+    if (problems.length > 0) {
+      const [[dept]] = await conn.query(`SELECT department_id FROM machines WHERE code=?`, [machine_code]);
+      const reqId = crypto.randomUUID();
+      const problemDesc = `[เช็คประจำวัน ${check_date}] ${machine_code} — พบปัญหา: ` +
+        problems.map(p => `item#${p.item_id}(${p.result})${p.remarks ? ': ' + p.remarks : ''}`).join(", ");
+      await conn.query(
+        `INSERT INTO maintenance_requests (id, machine_id, problem_description, priority, department_id, status, breakdown_start)
+         VALUES (?, ?, ?, 'Medium', ?, 'New', NOW())`,
+        [reqId, mc.id, problemDesc, dept?.department_id || null]
+      );
+      await conn.query(
+        `UPDATE daily_check_records SET auto_request_id=? WHERE id=?`, [reqId, actualRecordId]
+      );
+      auto_request_id = reqId;
+    }
+    await conn.commit();
+    res.json({ ok: true, record_id: actualRecordId, had_problem: problems.length > 0, auto_request_id });
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// POST /api/check/approve — อนุมัติ batch ต่อ line
+app.post("/api/check/approve", async (req, res) => {
+  const { check_date, line_group, approver_role, approver_name, notes } = req.body || {};
+  if (!check_date || !line_group || !approver_role || !approver_name)
+    return res.status(400).json({ error: "check_date, line_group, approver_role, approver_name จำเป็น" });
+  const valid_roles = ["PD Supervisor", "MT Leader", "PD Manager"];
+  if (!valid_roles.includes(approver_role))
+    return res.status(400).json({ error: "approver_role ต้องเป็น: " + valid_roles.join(", ") });
+  const conn = await pool.getConnection();
+  try {
+    await conn.query(
+      `INSERT INTO daily_check_approvals (check_date, line_group, approver_role, approver_name, approved_at, notes)
+       VALUES (?, ?, ?, ?, NOW(), ?)
+       ON DUPLICATE KEY UPDATE approver_name=VALUES(approver_name), approved_at=NOW(), notes=VALUES(notes)`,
+      [check_date, line_group, approver_role, approver_name, notes || null]
+    );
+    if (approver_role === "PD Manager") {
+      await conn.query(
+        `UPDATE daily_check_records SET status='approved'
+         WHERE check_date=? AND machine_code IN (SELECT code FROM machines WHERE line_group=?)`,
+        [check_date, line_group]
+      );
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
 app.listen(PORT, async () => {
   console.log(`[API] listening on http://localhost:${PORT}`);
   try {

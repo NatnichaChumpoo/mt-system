@@ -135,9 +135,13 @@ function MachineScreen({ ctx }) {
         </div>
       </div>
 
-      {/* repair action — directly under the machine info */}
+      {/* actions */}
       <button className="btn btn-danger btn-xl btn-block" onClick={() => ctx.go("m_report", { mc: mc.code })}>
         <Icon name="wrench" size={20} /> แจ้งซ่อมเครื่องนี้
+      </button>
+      <button className="btn btn-block" onClick={() => ctx.go("m_checkin", { mc: mc.code })}
+        style={{ background: "var(--surface)", border: "1px solid var(--border)", color: "var(--ink)", fontWeight: 600 }}>
+        <Icon name="checkCircle" size={18} /> เช็คความพร้อมประจำวัน
       </button>
     </div>);
 

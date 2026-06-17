@@ -348,6 +348,42 @@
     if (!res.ok) throw new Error(j.error || "load monthly report failed");
     return j;
   };
+  DATA.loadCheckTemplate = async (machineCode) => {
+    const res = await fetch(API + `/api/check/template/${encodeURIComponent(machineCode)}`);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "load template failed");
+    return j;
+  };
+  DATA.loadCheckRecord = async (machineCode, date) => {
+    const res = await fetch(API + `/api/check/record/${encodeURIComponent(machineCode)}/${date}`);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "load record failed");
+    return j;
+  };
+  DATA.loadCheckStatus = async (date) => {
+    const res = await fetch(API + `/api/check/status?date=${date}`);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "load check status failed");
+    return j;
+  };
+  DATA.submitCheck = async (machineCode, checkDate, operatorName, results) => {
+    const res = await fetch(API + "/api/check/submit", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ machine_code: machineCode, check_date: checkDate, operator_name: operatorName, results }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "submit failed");
+    return j;
+  };
+  DATA.approveCheck = async (checkDate, lineGroup, approverRole, approverName, notes) => {
+    const res = await fetch(API + "/api/check/approve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ check_date: checkDate, line_group: lineGroup, approver_role: approverRole, approver_name: approverName, notes }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "approve failed");
+    return j;
+  };
   DATA.refresh = load;
 
   /* ---------- auto-poll: ตรวจสถานะใบแจ้งซ่อม / คลังอะไหล่เปลี่ยน ---------- */
