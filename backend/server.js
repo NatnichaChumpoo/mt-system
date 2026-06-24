@@ -5,17 +5,86 @@ import crypto from "crypto";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import multer from "multer";
+import fs from "fs";
 import { pool, q, getSafeDbConfig, verifyDbConnectionOnce } from "./db.js";
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const UPLOADS_DIR = path.join(__dirname, "uploads", "machine-photos");
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const photoStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+    cb(null, req.params.code + ext);
+  },
+});
+const uploadPhoto = multer({
+  storage: photoStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("ไฟล์ต้องเป็นรูปภาพเท่านั้น"));
+  },
+});
+
+// ---- request (แจ้งซ่อม) photos ----
+const REQ_UPLOADS_DIR = path.join(__dirname, "uploads", "request-photos");
+if (!fs.existsSync(REQ_UPLOADS_DIR)) fs.mkdirSync(REQ_UPLOADS_DIR, { recursive: true });
+const reqPhotoStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, REQ_UPLOADS_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
+    const safeNo = String(req.params.requestNo || "REQ").replace(/[^A-Za-z0-9_-]/g, "_");
+    cb(null, `${safeNo}_${Date.now()}_${crypto.randomBytes(3).toString("hex")}${ext}`);
+  },
+});
+const uploadReqPhotos = multer({
+  storage: reqPhotoStorage,
+  limits: { fileSize: 10 * 1024 * 1024, files: 6 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("ไฟล์ต้องเป็นรูปภาพเท่านั้น"));
+  },
+});
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use("/assets", express.static(path.join(__dirname, "..", "assets")));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 const PORT = process.env.PORT || 3001;
 const today = () => new Date().toISOString().slice(0, 10);
+
+// photo_paths column stores a JSON array of URL paths; tolerate null/legacy values
+function safeParsePhotos(val) {
+  if (!val) return [];
+  try {
+    const arr = JSON.parse(val);
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+// ---------- auth helpers (crypto.scrypt, no external lib) ----------
+const DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || "1234";
+function hashPassword(pw) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(pw, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+function verifyPassword(pw, stored) {
+  if (!stored || !stored.includes(":")) return false;
+  const [salt, hash] = stored.split(":");
+  const test = crypto.scryptSync(pw, salt, 64).toString("hex");
+  const a = Buffer.from(hash, "hex");
+  const b = Buffer.from(test, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 // ---------- mappers: SQL rows -> prototype (window.DATA) shape ----------
 const rankFromScore = (s) => (s >= 9 ? "Critical" : s >= 6 ? "Medium" : "Low");
@@ -40,7 +109,7 @@ async function buildData() {
               r.accepted_by_name, r.accepted_at,
               r.breakdown_start, r.finish_repair, r.downtime_hours,
               m.code AS mc, m.name AS mcName, d.name AS dept, u.full_name AS reporter,
-              r.prod_decision, r.prod_reason, r.review_round
+              r.prod_decision, r.prod_reason, r.review_round, r.photo_paths
        FROM maintenance_requests r
        JOIN machines m ON m.id = r.machine_id
        LEFT JOIN departments d ON d.id = r.department_id
@@ -62,7 +131,7 @@ async function buildData() {
     q(`SELECT pm.id, m.code AS mc, m.name, pm.checklist, pm.frequency,
               pm.last_pm_date, pm.next_pm_date, pm.completed
        FROM pm_schedules pm JOIN machines m ON m.id = pm.machine_id`),
-    q(`SELECT id, full_name, email, role, phone, telegram_chat_id, is_active FROM app_users ORDER BY full_name`),
+    q(`SELECT id, full_name, username, email, role, phone, telegram_chat_id, is_active FROM app_users ORDER BY full_name`),
     q(`SELECT sm.type, sm.qty, sm.moved_at, sm.note, sp.code, sp.name
        FROM stock_movements sm JOIN spare_parts sp ON sp.id = sm.part_id
        ORDER BY sm.moved_at DESC`),
@@ -86,6 +155,7 @@ async function buildData() {
 
   const roleRev = { operator:"Operator", maintenance:"Maintenance",
     technician:"Maintenance", supervisor:"Maintenance",
+    production:"Production",
     store:"Store Keeper", manager:"Manager", admin:"Admin" };
 
   const D = {};
@@ -111,6 +181,7 @@ async function buildData() {
     acceptedBy:r.accepted_by_name || "", acceptedAt:r.accepted_at || "",
     prodDecision:r.prod_decision || null, prodReason:r.prod_reason || "",
     reviewRound:r.review_round || 0,
+    photos:safeParsePhotos(r.photo_paths),
   }));
   D.repairs = {};
   repairs.forEach((ra) => {
@@ -134,7 +205,8 @@ async function buildData() {
   }));
   D.users = users.map((u, i) => ({
     id:"U-" + String(i + 1).padStart(3, "0"), db_id:u.id, name:u.full_name,
-    user:(u.email || "").split("@")[0], email:u.email || "",
+    user:u.username || (u.email || "").split("@")[0], username:u.username || "",
+    email:u.email || "",
     role:roleRev[u.role] || "Operator", dbRole:u.role,
     phone:u.phone || "", telegramId:u.telegram_chat_id || "",
     dept:"", status:u.is_active ? "Active" : "Inactive",
@@ -183,6 +255,72 @@ app.get("/api/health", async (req, res) => {
       ok: false,
       db: { ok: false, config: getSafeDbConfig(), error: String(e.message || e) },
     });
+  }
+});
+
+// ---------- AUTH: login ด้วย username + password ----------
+app.post("/api/login", async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password)
+    return res.status(400).json({ error: "กรุณากรอกชื่อผู้ใช้และรหัสผ่าน" });
+  try {
+    const [[u]] = await pool.query(
+      `SELECT id, full_name, username, password_hash, role, email, phone, telegram_chat_id, is_active
+       FROM app_users WHERE username = ? LIMIT 1`,
+      [username]
+    );
+    if (!u || !verifyPassword(password, u.password_hash))
+      return res.status(401).json({ error: "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" });
+    if (!u.is_active)
+      return res.status(403).json({ error: "บัญชีนี้ถูกระงับการใช้งาน" });
+    const roleRev = { operator:"Operator", maintenance:"Maintenance",
+      technician:"Maintenance", supervisor:"Maintenance", production:"Production",
+      store:"Store Keeper", manager:"Manager", admin:"Admin" };
+    res.json({
+      ok: true,
+      user: {
+        db_id: u.id, name: u.full_name, username: u.username,
+        role: roleRev[u.role] || "Operator", dbRole: u.role,
+        email: u.email || "", phone: u.phone || "",
+        telegramId: u.telegram_chat_id || "",
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// ---------- AUTH: สมัครสมาชิก (register) ----------
+app.post("/api/register", async (req, res) => {
+  const { fullName, username, password, role = "operator", email, phone, telegramId } = req.body || {};
+  if (!fullName || !fullName.trim()) return res.status(400).json({ error: "กรุณากรอกชื่อ-นามสกุล" });
+  if (!username || !username.trim()) return res.status(400).json({ error: "กรุณากรอกชื่อผู้ใช้ (Username)" });
+  if (!password || password.length < 4) return res.status(400).json({ error: "รหัสผ่านต้องยาวอย่างน้อย 4 ตัวอักษร" });
+  const validRoles = ["operator","maintenance","technician","supervisor","production","manager","planner","store","purchasing","admin"];
+  if (!validRoles.includes(role)) return res.status(400).json({ error: "role ไม่ถูกต้อง" });
+  try {
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO app_users (id, full_name, username, password_hash, role, email, phone, telegram_chat_id, is_active)
+       VALUES (?,?,?,?,?,?,?,?,1)`,
+      [id, fullName.trim(), username.trim(), hashPassword(password), role, email || null, phone || null, telegramId || null]
+    );
+    const roleRev = { operator:"Operator", maintenance:"Maintenance",
+      technician:"Maintenance", supervisor:"Maintenance", production:"Production",
+      store:"Store Keeper", manager:"Manager", admin:"Admin" };
+    res.json({
+      ok: true,
+      user: {
+        db_id: id, name: fullName.trim(), username: username.trim(),
+        role: roleRev[role] || "Operator", dbRole: role,
+        email: email || "", phone: phone || "", telegramId: telegramId || "",
+      },
+    });
+  } catch (e) {
+    if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "ชื่อผู้ใช้ (username) หรืออีเมลนี้มีในระบบแล้ว" });
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
   }
 });
 
@@ -238,6 +376,28 @@ app.post("/api/requests", async (req, res) => {
     res.status(500).json({ error: String(e.message || e) });
   } finally {
     conn.release();
+  }
+});
+
+// POST /api/requests/:requestNo/photos — แนบรูปหน้างาน (multipart, หลายรูป)
+app.post("/api/requests/:requestNo/photos", uploadReqPhotos.array("photos", 6), async (req, res) => {
+  const { requestNo } = req.params;
+  try {
+    const [[r]] = await pool.query(
+      `SELECT id, photo_paths FROM maintenance_requests WHERE request_no = ?`, [requestNo]
+    );
+    if (!r) return res.status(404).json({ error: "ไม่พบใบแจ้งซ่อม: " + requestNo });
+    const newPaths = (req.files || []).map((f) => `/uploads/request-photos/${f.filename}`);
+    if (!newPaths.length) return res.status(400).json({ error: "ไม่มีรูปที่อัปโหลด" });
+    const merged = [...safeParsePhotos(r.photo_paths), ...newPaths];
+    await pool.query(
+      `UPDATE maintenance_requests SET photo_paths = ? WHERE id = ?`,
+      [JSON.stringify(merged), r.id]
+    );
+    res.json({ ok: true, photos: merged });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
   }
 });
 
@@ -328,7 +488,7 @@ app.delete("/api/requests/:requestNo", async (req, res) => {
   try {
     await conn.beginTransaction();
     const [[requestRow]] = await conn.query(
-      `SELECT id FROM maintenance_requests WHERE request_no = ? LIMIT 1`,
+      `SELECT id, photo_paths FROM maintenance_requests WHERE request_no = ? LIMIT 1`,
       [requestNo]
     );
     if (!requestRow) {
@@ -345,6 +505,17 @@ app.delete("/api/requests/:requestNo", async (req, res) => {
     await conn.query(`DELETE FROM maintenance_requests WHERE id = ?`, [requestRow.id]);
 
     await conn.commit();
+
+    // ลบไฟล์รูปหน้างานทิ้งด้วย (best-effort — ทำหลัง commit เพราะ filesystem rollback ไม่ได้)
+    for (const p of safeParsePhotos(requestRow.photo_paths)) {
+      try {
+        const filePath = path.join(__dirname, p.replace(/^\//, ""));
+        if (filePath.startsWith(REQ_UPLOADS_DIR) && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (err) {
+        console.error("[request-delete] ลบไฟล์รูปไม่สำเร็จ:", p, err.message);
+      }
+    }
+
     res.json({ ok: true, request_no: requestNo });
   } catch (e) {
     await conn.rollback();
@@ -637,34 +808,50 @@ app.delete("/api/machines/:code", async (req, res) => {
 
 // ---------- WRITE: เพิ่มผู้ใช้งาน ----------
 app.post("/api/users", async (req, res) => {
-  const { fullName, role = "operator", email, phone, telegramId } = req.body || {};
+  const { fullName, username, role = "operator", email, phone, telegramId } = req.body || {};
   if (!fullName) return res.status(400).json({ error: "fullName จำเป็นต้องระบุ" });
-  const validRoles = ["operator","maintenance","technician","supervisor","manager","planner","store","purchasing","admin"];
+  if (!username || !username.trim()) return res.status(400).json({ error: "username จำเป็นต้องระบุ" });
+  const validRoles = ["operator","maintenance","technician","supervisor","production","manager","planner","store","purchasing","admin"];
   if (!validRoles.includes(role)) return res.status(400).json({ error: "role ไม่ถูกต้อง" });
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     const id = crypto.randomUUID();
     await conn.query(
-      `INSERT INTO app_users (id, full_name, role, email, phone, telegram_chat_id, is_active) VALUES (?,?,?,?,?,?,1)`,
-      [id, fullName, role, email || null, phone || null, telegramId || null]
+      `INSERT INTO app_users (id, full_name, username, password_hash, role, email, phone, telegram_chat_id, is_active) VALUES (?,?,?,?,?,?,?,?,1)`,
+      [id, fullName, username.trim(), hashPassword(DEFAULT_PASSWORD), role, email || null, phone || null, telegramId || null]
     );
     await conn.commit();
-    res.json({ ok: true, id });
+    res.json({ ok: true, id, default_password: DEFAULT_PASSWORD });
   } catch (e) {
     await conn.rollback();
-    if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "อีเมลนี้มีในระบบแล้ว" });
+    if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "username หรืออีเมลนี้มีในระบบแล้ว" });
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });
   } finally { conn.release(); }
 });
 
+// ---------- WRITE: รีเซ็ตรหัสผ่านเป็นค่าเริ่มต้น ----------
+app.post("/api/users/:id/reset-password", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [[u]] = await pool.query(`SELECT id FROM app_users WHERE id = ?`, [id]);
+    if (!u) return res.status(404).json({ error: "ไม่พบผู้ใช้" });
+    await pool.query(`UPDATE app_users SET password_hash=? WHERE id=?`, [hashPassword(DEFAULT_PASSWORD), id]);
+    res.json({ ok: true, default_password: DEFAULT_PASSWORD });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
 // ---------- WRITE: แก้ไขผู้ใช้งาน ----------
 app.put("/api/users/:id", async (req, res) => {
   const { id } = req.params;
-  const { fullName, role, email, phone, telegramId, isActive } = req.body || {};
+  const { fullName, username, role, email, phone, telegramId, isActive } = req.body || {};
   if (!fullName) return res.status(400).json({ error: "fullName จำเป็นต้องระบุ" });
-  const validRoles = ["operator","maintenance","technician","supervisor","manager","planner","store","purchasing","admin"];
+  if (!username || !username.trim()) return res.status(400).json({ error: "username จำเป็นต้องระบุ" });
+  const validRoles = ["operator","maintenance","technician","supervisor","production","manager","planner","store","purchasing","admin"];
   if (role && !validRoles.includes(role)) return res.status(400).json({ error: "role ไม่ถูกต้อง" });
   const conn = await pool.getConnection();
   try {
@@ -672,14 +859,14 @@ app.put("/api/users/:id", async (req, res) => {
     const [[u]] = await conn.query(`SELECT id FROM app_users WHERE id = ?`, [id]);
     if (!u) { await conn.rollback(); return res.status(404).json({ error: "ไม่พบผู้ใช้" }); }
     await conn.query(
-      `UPDATE app_users SET full_name=?, role=?, email=?, phone=?, telegram_chat_id=?, is_active=? WHERE id=?`,
-      [fullName, role || "operator", email || null, phone || null, telegramId || null, isActive !== false ? 1 : 0, id]
+      `UPDATE app_users SET full_name=?, username=?, role=?, email=?, phone=?, telegram_chat_id=?, is_active=? WHERE id=?`,
+      [fullName, username.trim(), role || "operator", email || null, phone || null, telegramId || null, isActive !== false ? 1 : 0, id]
     );
     await conn.commit();
     res.json({ ok: true, id });
   } catch (e) {
     await conn.rollback();
-    if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "อีเมลนี้มีในระบบแล้ว" });
+    if (e.code === "ER_DUP_ENTRY") return res.status(400).json({ error: "username หรืออีเมลนี้มีในระบบแล้ว" });
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });
   } finally { conn.release(); }
@@ -943,8 +1130,9 @@ app.get("/api/check/template/:machine_code", async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const [[mc]] = await conn.query(
-      `SELECT m.code, m.name, m.line_group, m.check_template_type_id,
-              t.name AS template_type_name
+      `SELECT m.code, m.name, m.line_group, m.check_template_type_id, m.photo_path,
+              t.name AS template_type_name,
+              t.safety_precautions, t.post_use_note
        FROM machines m
        LEFT JOIN check_template_types t ON t.id = m.check_template_type_id
        WHERE m.code = ?`, [machine_code]
@@ -971,7 +1159,7 @@ app.get("/api/check/record/:machine_code/:date", async (req, res) => {
   try {
     const [[record]] = await conn.query(
       `SELECT id, machine_code, check_date, operator_name, scanned_at,
-              submitted_at, status, auto_request_id
+              submitted_at, status, auto_request_id, signature_data
        FROM daily_check_records
        WHERE machine_code = ? AND check_date = ?`, [machine_code, date]
     );
@@ -1008,14 +1196,17 @@ app.get("/api/check/status", async (req, res) => {
        ORDER BY m.line_group, m.code`, [date]
     );
     const [approvals] = await conn.query(
-      `SELECT line_group, approver_role, approver_name, approved_at, notes
+      `SELECT line_group, approver_role, approver_name, approved_at, notes, signature_data
        FROM daily_check_approvals
        WHERE check_date = ?`, [date]
     );
     const approvalMap = {};
     for (const a of approvals) {
       if (!approvalMap[a.line_group]) approvalMap[a.line_group] = {};
-      approvalMap[a.line_group][a.approver_role] = { approver_name: a.approver_name, approved_at: a.approved_at, notes: a.notes };
+      approvalMap[a.line_group][a.approver_role] = {
+        approver_name: a.approver_name, approved_at: a.approved_at,
+        notes: a.notes, signature_data: a.signature_data || null,
+      };
     }
     const lines = {};
     for (const m of machines) {
@@ -1040,7 +1231,7 @@ app.get("/api/check/status", async (req, res) => {
 
 // POST /api/check/submit — บันทึกผลเช็ค (สร้างใบแจ้งซ่อมอัตโนมัติถ้ามีปัญหา)
 app.post("/api/check/submit", async (req, res) => {
-  const { machine_code, check_date, operator_name, results } = req.body || {};
+  const { machine_code, check_date, operator_name, results, signature_data } = req.body || {};
   if (!machine_code || !check_date || !Array.isArray(results) || results.length === 0)
     return res.status(400).json({ error: "machine_code, check_date, results จำเป็น" });
   const conn = await pool.getConnection();
@@ -1051,10 +1242,10 @@ app.post("/api/check/submit", async (req, res) => {
     const recordId = crypto.randomUUID();
     const now = new Date();
     await conn.query(
-      `INSERT INTO daily_check_records (id, machine_code, check_date, operator_name, scanned_at, submitted_at, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'submitted')
-       ON DUPLICATE KEY UPDATE operator_name=VALUES(operator_name), submitted_at=VALUES(submitted_at), status='submitted'`,
-      [recordId, machine_code, check_date, operator_name || null, now, now]
+      `INSERT INTO daily_check_records (id, machine_code, check_date, operator_name, scanned_at, submitted_at, status, signature_data)
+       VALUES (?, ?, ?, ?, ?, ?, 'submitted', ?)
+       ON DUPLICATE KEY UPDATE operator_name=VALUES(operator_name), submitted_at=VALUES(submitted_at), status='submitted', signature_data=VALUES(signature_data)`,
+      [recordId, machine_code, check_date, operator_name || null, now, now, signature_data || null]
     );
     const [[saved]] = await conn.query(
       `SELECT id FROM daily_check_records WHERE machine_code=? AND check_date=?`, [machine_code, check_date]
@@ -1072,9 +1263,19 @@ app.post("/api/check/submit", async (req, res) => {
     let auto_request_id = null;
     if (problems.length > 0) {
       const [[dept]] = await conn.query(`SELECT department_id FROM machines WHERE code=?`, [machine_code]);
+      const problemIds = problems.map(p => p.item_id);
+      const [itemRows] = await conn.query(
+        `SELECT id, seq_label, item_desc FROM check_template_items WHERE id IN (?)`,
+        [problemIds]
+      );
+      const itemMap = Object.fromEntries(itemRows.map(r => [r.id, r]));
       const reqId = crypto.randomUUID();
       const problemDesc = `[เช็คประจำวัน ${check_date}] ${machine_code} — พบปัญหา: ` +
-        problems.map(p => `item#${p.item_id}(${p.result})${p.remarks ? ': ' + p.remarks : ''}`).join(", ");
+        problems.map(p => {
+          const it = itemMap[p.item_id];
+          const label = it ? (it.seq_label ? `${it.seq_label}. ` : "") + it.item_desc : `item#${p.item_id}`;
+          return `${label}(${p.result})${p.remarks ? ": " + p.remarks : ""}`;
+        }).join(", ");
       await conn.query(
         `INSERT INTO maintenance_requests (id, machine_id, problem_description, priority, department_id, status, breakdown_start)
          VALUES (?, ?, ?, 'Medium', ?, 'New', NOW())`,
@@ -1096,7 +1297,7 @@ app.post("/api/check/submit", async (req, res) => {
 
 // POST /api/check/approve — อนุมัติ batch ต่อ line
 app.post("/api/check/approve", async (req, res) => {
-  const { check_date, line_group, approver_role, approver_name, notes } = req.body || {};
+  const { check_date, line_group, approver_role, approver_name, notes, signature_data } = req.body || {};
   if (!check_date || !line_group || !approver_role || !approver_name)
     return res.status(400).json({ error: "check_date, line_group, approver_role, approver_name จำเป็น" });
   const valid_roles = ["PD Supervisor", "MT Leader", "PD Manager"];
@@ -1105,10 +1306,10 @@ app.post("/api/check/approve", async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.query(
-      `INSERT INTO daily_check_approvals (check_date, line_group, approver_role, approver_name, approved_at, notes)
-       VALUES (?, ?, ?, ?, NOW(), ?)
-       ON DUPLICATE KEY UPDATE approver_name=VALUES(approver_name), approved_at=NOW(), notes=VALUES(notes)`,
-      [check_date, line_group, approver_role, approver_name, notes || null]
+      `INSERT INTO daily_check_approvals (check_date, line_group, approver_role, approver_name, approved_at, notes, signature_data)
+       VALUES (?, ?, ?, ?, NOW(), ?, ?)
+       ON DUPLICATE KEY UPDATE approver_name=VALUES(approver_name), approved_at=NOW(), notes=VALUES(notes), signature_data=VALUES(signature_data)`,
+      [check_date, line_group, approver_role, approver_name, notes || null, signature_data || null]
     );
     if (approver_role === "PD Manager") {
       await conn.query(
@@ -1122,6 +1323,229 @@ app.post("/api/check/approve", async (req, res) => {
     console.error(e);
     res.status(500).json({ error: String(e.message || e) });
   } finally { conn.release(); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// CHECK FORM EDITOR API
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/check/template-types — list all types with their machines
+app.get("/api/check/template-types", async (req, res) => {
+  try {
+    const [types] = await pool.query(
+      `SELECT id, name, safety_precautions, post_use_note FROM check_template_types ORDER BY id`
+    );
+    const [machines] = await pool.query(
+      `SELECT code, name, line_group, check_template_type_id, photo_path
+       FROM machines WHERE check_template_type_id IS NOT NULL ORDER BY code`
+    );
+    const machineMap = {};
+    for (const m of machines) {
+      const tid = m.check_template_type_id;
+      if (!machineMap[tid]) machineMap[tid] = [];
+      machineMap[tid].push(m);
+    }
+    const result = types.map(t => ({ ...t, machines: machineMap[t.id] || [] }));
+    res.json(result);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// GET /api/check/template-items/:type_id — items for a template type
+app.get("/api/check/template-items/:type_id", async (req, res) => {
+  try {
+    const [items] = await pool.query(
+      `SELECT id, seq_label, item_desc, standard_criteria, method, sort_order
+       FROM check_template_items WHERE template_type_id = ? ORDER BY sort_order`,
+      [req.params.type_id]
+    );
+    res.json(items);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// PUT /api/check/template-type/:id — update safety/post-use text
+app.put("/api/check/template-type/:id", async (req, res) => {
+  const { safety_precautions, post_use_note } = req.body || {};
+  try {
+    await pool.query(
+      `UPDATE check_template_types SET safety_precautions=?, post_use_note=? WHERE id=?`,
+      [safety_precautions || null, post_use_note || null, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// POST /api/check/template-item — add new item
+app.post("/api/check/template-item", async (req, res) => {
+  const { template_type_id, seq_label, item_desc, standard_criteria, method, sort_order } = req.body || {};
+  if (!template_type_id || !item_desc)
+    return res.status(400).json({ error: "template_type_id, item_desc จำเป็น" });
+  try {
+    const [existing] = await pool.query(
+      `SELECT MAX(sort_order) AS max_order FROM check_template_items WHERE template_type_id=?`,
+      [template_type_id]
+    );
+    const nextOrder = (existing[0].max_order || 0) + 10;
+    const [r] = await pool.query(
+      `INSERT INTO check_template_items (template_type_id, seq_label, item_desc, standard_criteria, method, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [template_type_id, seq_label || null, item_desc, standard_criteria || null, method || null, sort_order ?? nextOrder]
+    );
+    res.json({ ok: true, id: r.insertId });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// PUT /api/check/template-item/:id — update item
+app.put("/api/check/template-item/:id", async (req, res) => {
+  const { seq_label, item_desc, standard_criteria, method, sort_order } = req.body || {};
+  if (!item_desc) return res.status(400).json({ error: "item_desc จำเป็น" });
+  try {
+    await pool.query(
+      `UPDATE check_template_items SET seq_label=?, item_desc=?, standard_criteria=?, method=?, sort_order=? WHERE id=?`,
+      [seq_label || null, item_desc, standard_criteria || null, method || null, sort_order ?? 0, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// DELETE /api/check/template-item/:id — delete item
+app.delete("/api/check/template-item/:id", async (req, res) => {
+  try {
+    await pool.query(`DELETE FROM daily_check_results WHERE item_id = ?`, [req.params.id]);
+    await pool.query(`DELETE FROM check_template_items WHERE id = ?`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// POST /api/machine/:code/photo — upload machine photo
+app.post("/api/machine/:code/photo", uploadPhoto.single("photo"), async (req, res) => {
+  const { code } = req.params;
+  if (!req.file) return res.status(400).json({ error: "ไม่พบไฟล์รูปภาพ" });
+  try {
+    const photoPath = `/uploads/machine-photos/${req.file.filename}`;
+    await pool.query(`UPDATE machines SET photo_path=? WHERE code=?`, [photoPath, code]);
+    res.json({ ok: true, photo_path: photoPath });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// DELETE /api/machine/:code/photo — remove machine photo
+app.delete("/api/machine/:code/photo", async (req, res) => {
+  const { code } = req.params;
+  try {
+    const [[mc]] = await pool.query(`SELECT photo_path FROM machines WHERE code=?`, [code]);
+    if (mc?.photo_path) {
+      const filePath = path.join(__dirname, mc.photo_path.replace(/^\//, ""));
+      try { fs.unlinkSync(filePath); } catch {}
+    }
+    await pool.query(`UPDATE machines SET photo_path=NULL WHERE code=?`, [code]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// MONTHLY CHECK SHEET API
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/check/monthly?year=Y&month=M
+app.get("/api/check/monthly", async (req, res) => {
+  const year  = parseInt(req.query.year)  || new Date().getFullYear();
+  const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
+  const pad   = String(month).padStart(2, "0");
+  const start = `${year}-${pad}-01`;
+  const end   = new Date(year, month, 0).toISOString().slice(0, 10);
+  const conn = await pool.getConnection();
+  try {
+    const [rows] = await conn.query(
+      `SELECT m.code, m.name, m.line_group,
+              r.check_date, r.status, r.operator_name, r.submitted_at,
+              SUM(CASE WHEN cr.result IN ('W','F') THEN 1 ELSE 0 END) AS problem_count
+       FROM machines m
+       LEFT JOIN daily_check_records r
+         ON r.machine_code = m.code AND r.check_date BETWEEN ? AND ?
+       LEFT JOIN daily_check_results cr ON cr.record_id = r.id
+       WHERE m.line_group IS NOT NULL
+       GROUP BY m.code, m.name, m.line_group, r.check_date, r.status, r.operator_name, r.submitted_at
+       ORDER BY m.line_group, m.code, r.check_date`,
+      [start, end]
+    );
+    const machineMap = {};
+    for (const row of rows) {
+      if (!machineMap[row.code]) {
+        machineMap[row.code] = { code: row.code, name: row.name, line_group: row.line_group, records: {} };
+      }
+      if (row.check_date) {
+        machineMap[row.code].records[row.check_date] = {
+          status: row.status,
+          operator_name: row.operator_name,
+          problem_count: Number(row.problem_count || 0),
+        };
+      }
+    }
+    const lines = {};
+    for (const mc of Object.values(machineMap)) {
+      if (!lines[mc.line_group]) lines[mc.line_group] = [];
+      lines[mc.line_group].push(mc);
+    }
+    const [approvals] = await conn.query(
+      `SELECT line_group, approver_role, approver_name, approved_at, signature_data
+       FROM monthly_check_approvals WHERE year=? AND month=?`,
+      [year, month]
+    );
+    const approvalMap = {};
+    for (const a of approvals) {
+      if (!approvalMap[a.line_group]) approvalMap[a.line_group] = {};
+      approvalMap[a.line_group][a.approver_role] = {
+        approver_name: a.approver_name, approved_at: a.approved_at, signature_data: a.signature_data || null,
+      };
+    }
+    res.json({ year, month, start, end, lines, approvals: approvalMap });
+  } catch (e) {
+    console.error(e); res.status(500).json({ error: String(e.message || e) });
+  } finally { conn.release(); }
+});
+
+// POST /api/check/monthly-approve
+app.post("/api/check/monthly-approve", async (req, res) => {
+  const { year, month, line_group, approver_role, approver_name, signature_data } = req.body || {};
+  if (!year || !month || !line_group || !approver_role || !approver_name)
+    return res.status(400).json({ error: "year, month, line_group, approver_role, approver_name จำเป็น" });
+  const valid_roles = ["PD Supervisor", "MT Leader", "PD Manager"];
+  if (!valid_roles.includes(approver_role))
+    return res.status(400).json({ error: "approver_role ไม่ถูกต้อง" });
+  try {
+    await pool.query(
+      `INSERT INTO monthly_check_approvals (year, month, line_group, approver_role, approver_name, approved_at, signature_data)
+       VALUES (?, ?, ?, ?, ?, NOW(), ?)
+       ON DUPLICATE KEY UPDATE approver_name=VALUES(approver_name), approved_at=NOW(), signature_data=VALUES(signature_data)`,
+      [year, month, line_group, approver_role, approver_name, signature_data || null]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e); res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 app.listen(PORT, async () => {

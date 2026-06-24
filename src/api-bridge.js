@@ -200,22 +200,60 @@
     if (!res.ok) throw new Error(j.error || "create failed");
     return j.request_no;
   };
-  DATA.createUser = async ({ fullName, role, email, phone, telegramId }) => {
+  // อัปโหลดรูปหน้างานแนบกับใบแจ้งซ่อม (multipart, หลายรูป)
+  DATA.uploadRequestPhotos = async (requestNo, files) => {
+    if (!files || !files.length) return [];
+    const fd = new FormData();
+    for (const f of files) fd.append("photos", f);
+    const res = await fetch(API + "/api/requests/" + encodeURIComponent(requestNo) + "/photos", {
+      method: "POST", body: fd,
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "upload failed");
+    return j.photos || [];
+  };
+  DATA.login = async (username, password) => {
+    const res = await fetch(API + "/api/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "เข้าสู่ระบบไม่สำเร็จ");
+    return j.user;
+  };
+  DATA.register = async ({ fullName, username, password, role, telegramId }) => {
+    const res = await fetch(API + "/api/register", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fullName, username, password, role, telegramId }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "สมัครสมาชิกไม่สำเร็จ");
+    return j.user;
+  };
+  DATA.createUser = async ({ fullName, username, role, email, phone, telegramId }) => {
     const res = await fetch(API + "/api/users", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fullName, role, email, phone, telegramId }),
+      body: JSON.stringify({ fullName, username, role, email, phone, telegramId }),
     });
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || "เพิ่มผู้ใช้ไม่สำเร็จ");
     return j;
   };
-  DATA.updateUser = async ({ db_id, fullName, role, email, phone, telegramId, isActive }) => {
+  DATA.updateUser = async ({ db_id, fullName, username, role, email, phone, telegramId, isActive }) => {
     const res = await fetch(API + "/api/users/" + encodeURIComponent(db_id), {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fullName, role, email, phone, telegramId, isActive }),
+      body: JSON.stringify({ fullName, username, role, email, phone, telegramId, isActive }),
     });
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || "แก้ไขผู้ใช้ไม่สำเร็จ");
+    return j;
+  };
+  DATA.resetUserPassword = async (db_id) => {
+    const res = await fetch(API + "/api/users/" + encodeURIComponent(db_id) + "/reset-password", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "รีเซ็ตรหัสผ่านไม่สำเร็จ");
     return j;
   };
   DATA.updateMachine = async ({ code, name, group, rank, criticality, dept, location, maker, model, installDate, status }) => {
@@ -366,22 +404,98 @@
     if (!res.ok) throw new Error(j.error || "load check status failed");
     return j;
   };
-  DATA.submitCheck = async (machineCode, checkDate, operatorName, results) => {
+  DATA.submitCheck = async (machineCode, checkDate, operatorName, results, signatureData) => {
     const res = await fetch(API + "/api/check/submit", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ machine_code: machineCode, check_date: checkDate, operator_name: operatorName, results }),
+      body: JSON.stringify({ machine_code: machineCode, check_date: checkDate, operator_name: operatorName, results, signature_data: signatureData || null }),
     });
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || "submit failed");
     return j;
   };
-  DATA.approveCheck = async (checkDate, lineGroup, approverRole, approverName, notes) => {
+  DATA.loadCheckTemplateTypes = async () => {
+    const res = await fetch(API + "/api/check/template-types");
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "load template types failed");
+    return j;
+  };
+  DATA.loadCheckTemplateItems = async (typeId) => {
+    const res = await fetch(API + `/api/check/template-items/${typeId}`);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "load items failed");
+    return j;
+  };
+  DATA.saveTemplateType = async (id, safety, postUse) => {
+    const res = await fetch(API + `/api/check/template-type/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ safety_precautions: safety, post_use_note: postUse }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "save failed");
+    return j;
+  };
+  DATA.addTemplateItem = async (typeId, item) => {
+    const res = await fetch(API + "/api/check/template-item", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template_type_id: typeId, ...item }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "add item failed");
+    return j;
+  };
+  DATA.updateTemplateItem = async (id, item) => {
+    const res = await fetch(API + `/api/check/template-item/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(item),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "update item failed");
+    return j;
+  };
+  DATA.deleteTemplateItem = async (id) => {
+    const res = await fetch(API + `/api/check/template-item/${id}`, { method: "DELETE" });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "delete failed");
+    return j;
+  };
+  DATA.uploadMachinePhoto = async (code, file) => {
+    const fd = new FormData();
+    fd.append("photo", file);
+    const res = await fetch(API + `/api/machine/${encodeURIComponent(code)}/photo`, {
+      method: "POST", body: fd,
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "upload failed");
+    return j;
+  };
+  DATA.deleteMachinePhoto = async (code) => {
+    const res = await fetch(API + `/api/machine/${encodeURIComponent(code)}/photo`, { method: "DELETE" });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "delete photo failed");
+    return j;
+  };
+  DATA.approveCheck = async (checkDate, lineGroup, approverRole, approverName, notes, signatureData) => {
     const res = await fetch(API + "/api/check/approve", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ check_date: checkDate, line_group: lineGroup, approver_role: approverRole, approver_name: approverName, notes }),
+      body: JSON.stringify({ check_date: checkDate, line_group: lineGroup, approver_role: approverRole, approver_name: approverName, notes, signature_data: signatureData || null }),
     });
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || "approve failed");
+    return j;
+  };
+  DATA.loadCheckMonthly = async (year, month) => {
+    const res = await fetch(API + `/api/check/monthly?year=${year}&month=${month}`);
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "load monthly failed");
+    return j;
+  };
+  DATA.approveCheckMonthly = async (year, month, lineGroup, approverRole, approverName, signatureData) => {
+    const res = await fetch(API + "/api/check/monthly-approve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, line_group: lineGroup, approver_role: approverRole, approver_name: approverName, signature_data: signatureData || null }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "monthly approve failed");
     return j;
   };
   DATA.refresh = load;

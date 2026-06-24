@@ -285,6 +285,7 @@ function EditMachineModal({ ctx, machine, onClose }) {
 const USER_ROLES = [
   ["operator","Operator — พนักงาน/ผู้ปฏิบัติงาน"],
   ["maintenance","Maintenance — ช่างซ่อมบำรุง / ฝ่าย MT"],
+  ["production","Production — ฝ่ายผลิต (PD)"],
   ["manager","Manager — ผู้จัดการ"],
   ["store","Store Keeper — คลังอะไหล่"],
   ["purchasing","Purchasing — จัดซื้อ"],
@@ -294,8 +295,11 @@ const USER_ROLES = [
 function UserForm({ f, set }) {
   return (
     <div className="grid" style={{ gridTemplateColumns:"1fr 1fr", gap:12 }}>
-      <label className="field-label" style={{ gridColumn:"1/-1" }}>ชื่อ-นามสกุล *
+      <label className="field-label">ชื่อ-นามสกุล *
         <input className="input" value={f.fullName} onChange={e=>set("fullName",e.target.value)} placeholder="เช่น สมชาย ใจดี" />
+      </label>
+      <label className="field-label">ชื่อผู้ใช้ (Username) *
+        <input className="input" value={f.username} onChange={e=>set("username",e.target.value)} placeholder="เช่น somchai" autoCapitalize="none" autoCorrect="off" />
       </label>
       <label className="field-label">บทบาท (Role)
         <select className="select" value={f.role} onChange={e=>set("role",e.target.value)}>
@@ -316,17 +320,18 @@ function UserForm({ f, set }) {
 }
 
 function AddUserModal({ ctx, onClose }) {
-  const [f, setF] = useState({ fullName:"", role:"operator", email:"", phone:"", telegramId:"" });
+  const [f, setF] = useState({ fullName:"", username:"", role:"operator", email:"", phone:"", telegramId:"" });
   const [saving, setSaving] = useState(false);
   const set = (k,v) => setF(p=>({...p,[k]:v}));
 
   const submit = async () => {
     if (!f.fullName.trim()) { ctx.toast("กรุณากรอกชื่อ-นามสกุล", "error"); return; }
+    if (!f.username.trim()) { ctx.toast("กรุณากรอกชื่อผู้ใช้ (Username)", "error"); return; }
     setSaving(true);
     try {
-      await DATA.createUser({ ...f, fullName: f.fullName.trim() });
+      const r = await DATA.createUser({ ...f, fullName: f.fullName.trim(), username: f.username.trim() });
       await DATA.refresh();
-      ctx.toast("เพิ่มผู้ใช้ " + f.fullName.trim() + " สำเร็จ", "check");
+      ctx.toast(`เพิ่มผู้ใช้ ${f.fullName.trim()} สำเร็จ · รหัสผ่านเริ่มต้น: ${r.default_password || "1234"}`, "check");
       window.dispatchEvent(new Event("mt-data-refresh"));
       onClose();
     } catch(e) { ctx.toast(e.message, "error"); }
@@ -351,6 +356,7 @@ function AddUserModal({ ctx, onClose }) {
 function EditUserModal({ ctx, user, onClose }) {
   const [f, setF] = useState({
     fullName:   user.name       || "",
+    username:   user.username   || user.user || "",
     role:       user.dbRole     || "operator",
     email:      user.email      || "",
     phone:      user.phone      || "",
@@ -358,19 +364,31 @@ function EditUserModal({ ctx, user, onClose }) {
     isActive:   user.status === "Active",
   });
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const set = (k,v) => setF(p=>({...p,[k]:v}));
 
   const submit = async () => {
     if (!f.fullName.trim()) { ctx.toast("กรุณากรอกชื่อ-นามสกุล", "error"); return; }
+    if (!f.username.trim()) { ctx.toast("กรุณากรอกชื่อผู้ใช้ (Username)", "error"); return; }
     setSaving(true);
     try {
-      await DATA.updateUser({ db_id: user.db_id, ...f, fullName: f.fullName.trim() });
+      await DATA.updateUser({ db_id: user.db_id, ...f, fullName: f.fullName.trim(), username: f.username.trim() });
       await DATA.refresh();
       ctx.toast("บันทึกข้อมูล " + f.fullName.trim() + " สำเร็จ", "check");
       window.dispatchEvent(new Event("mt-data-refresh"));
       onClose();
     } catch(e) { ctx.toast(e.message, "error"); }
     finally { setSaving(false); }
+  };
+
+  const resetPw = async () => {
+    if (!window.confirm(`รีเซ็ตรหัสผ่านของ ${user.name} เป็นค่าเริ่มต้น?`)) return;
+    setResetting(true);
+    try {
+      const r = await DATA.resetUserPassword(user.db_id);
+      ctx.toast(`รีเซ็ตรหัสผ่านแล้ว · รหัสใหม่: ${r.default_password || "1234"}`, "check");
+    } catch(e) { ctx.toast(e.message, "error"); }
+    finally { setResetting(false); }
   };
 
   return (
@@ -381,11 +399,16 @@ function EditUserModal({ ctx, user, onClose }) {
           <input type="checkbox" checked={f.isActive} onChange={e=>set("isActive",e.target.checked)} style={{ width:16, height:16 }} />
           <span>บัญชีใช้งานได้ (Active)</span>
         </label>
-        <div className="row gap-sm" style={{ justifyContent:"flex-end", marginTop:4 }}>
-          <button className="btn" onClick={onClose} disabled={saving}>ยกเลิก</button>
-          <button className="btn btn-primary" onClick={submit} disabled={saving}>
-            {saving ? "กำลังบันทึก…" : <><Icon name="check" size={14}/> บันทึก</>}
+        <div className="row gap-sm" style={{ justifyContent:"space-between", alignItems:"center", marginTop:4 }}>
+          <button className="btn" onClick={resetPw} disabled={resetting || saving} style={{ color:"var(--accent)" }}>
+            <Icon name="refresh" size={14}/> {resetting ? "กำลังรีเซ็ต…" : "รีเซ็ตรหัสผ่าน"}
           </button>
+          <div className="row gap-sm">
+            <button className="btn" onClick={onClose} disabled={saving}>ยกเลิก</button>
+            <button className="btn btn-primary" onClick={submit} disabled={saving}>
+              {saving ? "กำลังบันทึก…" : <><Icon name="check" size={14}/> บันทึก</>}
+            </button>
+          </div>
         </div>
       </div>
     </Modal>
@@ -675,12 +698,13 @@ function Admin({ ctx }) {
           <div className="panel-head"><div className="h-sm">ผู้ใช้งาน ({Dd.users.length})</div><button className="btn btn-sm btn-primary" onClick={()=>setAddingUser(true)}><Icon name="plus" size={14}/> เพิ่มผู้ใช้</button></div>
           <div className="table-wrap">
             <table className="tbl">
-              <thead><tr><th>ID</th><th>ชื่อ</th><th>อีเมล</th><th>บทบาท (Role)</th><th>โทร / Telegram</th><th>สถานะ</th><th></th></tr></thead>
+              <thead><tr><th>ID</th><th>ชื่อ</th><th>Username</th><th>อีเมล</th><th>บทบาท (Role)</th><th>โทร / Telegram</th><th>สถานะ</th><th></th></tr></thead>
               <tbody>
                 {Dd.users.map(u=>(
                   <tr key={u.id}>
                     <td className="cell-code">{u.id}</td>
                     <td className="small" style={{fontWeight:600}}>{u.name}</td>
+                    <td className="mono small">{u.user || "—"}</td>
                     <td className="mono small muted">{u.email || "—"}</td>
                     <td><span className="chip">{u.role}</span> <span className="tiny muted-2">{Dd.roleLabelTH[u.role]}</span></td>
                     <td className="small muted">{u.phone || "—"}{u.telegramId ? <span className="tiny" style={{marginLeft:6, color:"var(--accent)"}}>TG:{u.telegramId}</span> : null}</td>

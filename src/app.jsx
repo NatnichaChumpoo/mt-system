@@ -28,6 +28,8 @@ const SCREENS = {
   d_reliability: { comp: ReliabilityDashboard, shell: "desktop" },
   d_monthly_report: { comp: MonthlyReport, shell: "desktop" },
   d_check_status: { comp: DailyCheckStatus, shell: "desktop" },
+  d_check_monthly: { comp: DailyCheckMonthly, shell: "desktop" },
+  d_check_edit: { comp: DailyCheckEdit, shell: "desktop" },
   m_checkin: { comp: DailyCheckIn, field: true, title: "เช็คความพร้อมเครื่องจักร", sub: "บันทึกผลตรวจประจำวัน", back: true, wide: false },
   d_admin: { comp: Admin, shell: "desktop" }
 };
@@ -40,19 +42,20 @@ const NAV = {
   },
   "Maintenance": { home: "m_queue", menu: [
     ["งานซ่อมบำรุง", [["m_queue", "คิวงานซ่อม", "wrench"], ["d_requests", "ใบแจ้งซ่อมทั้งหมด", "list"], ["d_pm", "แผน PM", "cal"]]],
-    ["เช็คประจำวัน", [["d_check_status", "สถานะเช็คเครื่อง", "checkCircle"]]],
+    ["เช็คประจำวัน", [["d_check_status", "สถานะเช็คเครื่อง", "checkCircle"], ["d_check_monthly", "รายงานประจำเดือน", "cal"], ["d_check_edit", "แก้ไขแบบฟอร์มตรวจ", "edit"]]],
     ["จัดการข้อมูล", [["d_admin", "จัดการเครื่องจักร", "machine"]]],
     ["ภาพรวม", [["d_dashboard", "Dashboard", "gauge"]]]]
   },
   "Production": { home: "d_prodverify", menu: [
-    ["ฝ่ายผลิต", [["d_prodverify", "ตรวจสอบใบแจ้งซ่อม", "checkCircle"], ["d_requests", "ใบแจ้งซ่อมทั้งหมด", "list"]]]]
+    ["ฝ่ายผลิต", [["d_prodverify", "ตรวจสอบใบแจ้งซ่อม", "checkCircle"], ["d_requests", "ใบแจ้งซ่อมทั้งหมด", "list"]]],
+    ["เช็คประจำวัน", [["d_check_status", "สถานะเช็คเครื่อง", "checkCircle"], ["d_check_monthly", "รายงานประจำเดือน", "cal"]]]]
   },
   "Store Keeper": { home: "d_master", menu: [
     ["คลังอะไหล่", [["d_master", "Master Data", "box"], ["d_reorder", "รายการสั่งซื้อ", "truck"], ["d_pohistory", "ประวัติใบสั่งซื้อ", "clock"], ["d_stock", "รับเข้า/เบิกออก", "download"]]]]
   },
   "Manager": { home: "d_dashboard", menu: [
     ["ภาพรวมบริหาร", [["d_dashboard", "Dashboard KPI", "gauge"], ["d_reliability", "Reliability Analysis", "chart"], ["d_monthly_report", "รายงานประจำเดือน", "download"]]],
-    ["เช็คประจำวัน", [["d_check_status", "สถานะเช็คเครื่อง", "checkCircle"]]]]
+    ["เช็คประจำวัน", [["d_check_status", "สถานะเช็คเครื่อง", "checkCircle"], ["d_check_monthly", "รายงานประจำเดือน", "cal"]]]]
   },
   "Admin": { home: "d_admin", menu: [
     ["จัดการระบบ", [["d_admin", "Master Data / Users", "cog"]]]]
@@ -92,9 +95,19 @@ function App() {
   const _qs = new URLSearchParams(window.location.search);
   const initialMC = _qs.get("mc") || null;
   const initialCheckMode = _qs.get("check") === "1";
-  const [screen, setScreen] = uS(() => initialMC ? (initialCheckMode ? "m_checkin" : "m_machine") : "login");
+  const [currentUser, setCurrentUser] = uS(() => {
+    try { return JSON.parse(localStorage.getItem("mt_session") || "null"); } catch { return null; }
+  });
+  const [screen, setScreen] = uS(() => {
+    if (initialMC) return initialCheckMode ? "m_checkin" : "m_machine";
+    let s = null; try { s = JSON.parse(localStorage.getItem("mt_session") || "null"); } catch {}
+    if (s) return NAV[s.role]?.home || "m_machine";
+    return "login";
+  });
   const [params, setParams] = uS(() => initialMC ? { mc: initialMC } : {});
-  const [role, setRole] = uS("Operator");
+  const baseRole = currentUser?.role || "Operator";
+  const [viewAs, setViewAs] = uS(null); /* admin only: ดูในฐานะ role อื่น */
+  const role = (baseRole === "Admin" && viewAs) ? viewAs : baseRole;
   const [stack, setStack] = uS([]);
   const [pendingMC, setPendingMC] = uS(initialMC);
   /* guest: เข้ามาจากสแกน QR โดยตรง ยังไม่ได้ login */
@@ -134,22 +147,33 @@ function App() {
   const showToast = (msg, kind) => {setToast({ msg, kind });clearTimeout(window.__tt);window.__tt = setTimeout(() => setToast(null), 3200);};
   const go = (s, p = {}) => {setStack((st) => [...st, { screen, params }]);setScreen(s);setParams(p);document.querySelector("main")?.scrollTo(0, 0);window.scrollTo(0, 0);};
   const back = () => {setStack((st) => {if (st.length === 0) return st;const prev = st[st.length - 1];setScreen(prev.screen);setParams(prev.params);return st.slice(0, -1);});};
-  const login = (r, home) => {
-    if (pendingMC && r === "Operator") {
-      setRole(r); setScreen("m_machine"); setParams({ mc: pendingMC }); setStack([]);
+  const login = (u) => {
+    setCurrentUser(u);
+    try { localStorage.setItem("mt_session", JSON.stringify(u)); } catch {}
+    if (pendingMC && u.role === "Operator") {
+      setScreen("m_machine"); setParams({ mc: pendingMC }); setStack([]);
       window.history.replaceState({}, "", window.location.pathname);
     } else {
-      setRole(r); setScreen(home); setParams({}); setStack([]);
+      setScreen(NAV[u.role]?.home || "m_machine"); setParams({}); setStack([]);
     }
   };
-  const switchRole = (r) => {setRole(r);setScreen(NAV[r].home);setParams({});setStack([]);setRoleMenu(false);};
-  const logout = () => {setScreen("login");setStack([]);setRoleMenu(false);};
+  const logout = () => {
+    setCurrentUser(null);
+    setViewAs(null);
+    try { localStorage.removeItem("mt_session"); } catch {}
+    setScreen("login"); setStack([]); setRoleMenu(false);
+  };
+  const viewAsRole = (r) => {
+    setViewAs(r === "Admin" ? null : r);
+    setScreen(NAV[r]?.home || "d_admin"); setParams({}); setStack([]); setRoleMenu(false);
+  };
   const exitGuest = () => {setGuest(false);setPendingMC(null);setScreen("login");setParams({});setStack([]);};
 
-  const ctx = { go, back, login, role, params, toast: showToast, pendingMC, guest, exitGuest };
+  const ctx = { go, back, login, role, params, toast: showToast, pendingMC, guest, exitGuest, currentUser };
   const meta = SCREENS[screen] || SCREENS.login;
   const Comp = meta.comp;
-  const user = userOf(role);
+  const shortOf = (nm) => { if (!nm) return "?"; const p = nm.trim().split(/\s+/); return ((p[0]?.[0] || "") + (p[1]?.[0] || "")).toUpperCase() || "?"; };
+  const user = currentUser ? { name: currentUser.name, short: shortOf(currentUser.name) } : userOf(role);
 
   /* ---------- login (full) ---------- */
   if (meta.shell === "full") {
@@ -165,19 +189,31 @@ function App() {
         <span className="avatar" style={{ width: 32, height: 32 }}>{user.short}</span>
         <span style={{ textAlign: "left", lineHeight: 1.25 }}>
           <span style={{ display: "block", fontSize: 13, fontWeight: 700 }}>{user.name}</span>
-          <span style={{ display: "block", fontSize: 11, color: "var(--ink-3)" }}>{role} · {labelOf(role)}</span>
+          <span style={{ display: "block", fontSize: 11, color: "var(--ink-3)" }}>
+            {baseRole === "Admin" && viewAs ? `Admin · ดูในฐานะ ${labelOf(role)}` : `${role} · ${labelOf(role)}`}
+          </span>
         </span>
         <Icon name="chevD" size={15} style={{ color: "var(--ink-3)" }} />
       </button>
       {roleMenu &&
     <div className="card" style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 248, zIndex: 50, boxShadow: "var(--sh-3)", overflow: "hidden" }}>
-          <div className="eyebrow" style={{ padding: "12px 14px 6px" }}>สลับบทบาท · prototype</div>
-          {ROLES.map((r) =>
-      <button key={r} className="row between" style={{ width: "100%", padding: "10px 14px", background: r === role ? "var(--surface-2)" : "transparent", border: 0, cursor: "pointer", textAlign: "left" }} onClick={() => switchRole(r)}>
-              <span><span style={{ fontWeight: 600, fontSize: 13.5 }}>{r}</span><span className="tiny muted-2" style={{ display: "block" }}>{labelOf(r)}</span></span>
-              {r === role && <Icon name="check" size={15} style={{ color: "var(--accent)" }} />}
-            </button>
-      )}
+          <div style={{ padding: "14px 14px 10px" }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{user.name}</div>
+            <div className="tiny muted-2" style={{ marginTop: 2 }}>
+              {baseRole === "Admin" && viewAs ? `Admin · ดูในฐานะ ${labelOf(role)}` : `${role} · ${labelOf(role)}`}
+            </div>
+          </div>
+          {baseRole === "Admin" &&
+          <>
+            <div className="divider"></div>
+            <div className="eyebrow" style={{ padding: "10px 14px 6px" }}>ดูในฐานะ (View as)</div>
+            {ROLES.map((r) =>
+              <button key={r} className="row between" style={{ width: "100%", padding: "9px 14px", background: r === role ? "var(--surface-2)" : "transparent", border: 0, cursor: "pointer", textAlign: "left" }} onClick={() => viewAsRole(r)}>
+                <span><span style={{ fontWeight: 600, fontSize: 13.5 }}>{r}</span><span className="tiny muted-2" style={{ display: "block" }}>{labelOf(r)}</span></span>
+                {r === role && <Icon name="check" size={15} style={{ color: "var(--accent)" }} />}
+              </button>
+            )}
+          </>}
           <div className="divider"></div>
           <button className="row gap-sm" style={{ width: "100%", padding: "12px 14px", border: 0, background: "transparent", cursor: "pointer", color: "var(--red-ink)", fontWeight: 600, fontSize: 13.5 }} onClick={logout}>
             <Icon name="logout" size={16} /> ออกจากระบบ
@@ -240,13 +276,6 @@ function App() {
             </div>
           )}
         </nav>
-        <div style={{ padding: "14px", borderTop: "1px solid var(--border)" }}>
-          {!collapsed && <div className="eyebrow" style={{ padding: "0 4px 9px", fontSize: 10 }}>เข้าสู่ระบบ</div>}
-          <button className="row between" title={collapsed ? user.name + " · " + role : undefined} onClick={() => setRoleMenu((m) => !m)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 11, padding: collapsed ? "9px 0" : "9px 11px", color: "var(--ink)", cursor: "pointer", justifyContent: collapsed ? "center" : "space-between" }}>
-            <span className="row gap-sm" style={{ justifyContent: collapsed ? "center" : "flex-start" }}><span className="avatar" style={{ width: 30, height: 30 }}>{user.short}</span>{!collapsed && <span style={{ textAlign: "left" }}><span style={{ display: "block", fontSize: 13, fontWeight: 700 }}>{user.name}</span><span className="tiny" style={{ display: "block", color: "var(--ink-3)" }}>{role}</span></span>}</span>
-            {!collapsed && <Icon name="chevD" size={14} style={{ color: "var(--ink-3)" }} />}
-          </button>
-        </div>
       </aside>
       }
 
@@ -311,7 +340,9 @@ function screenTitle(s, meta) {
   const m = { d_requests: "ใบแจ้งซ่อม", d_detail: "รายละเอียดใบแจ้ง", d_verify: "ตรวจรับงาน", d_prodverify: "ตรวจสอบใบแจ้งซ่อม (ฝ่ายผลิต)", d_pm: "แผน PM",
     d_master: "คลังอะไหล่ Master Data", d_reorder: "รายการสั่งซื้อ", d_pohistory: "ประวัติใบสั่งซื้อ", d_stock: "รับเข้า/เบิกออก",
     d_dashboard: "Dashboard ผู้บริหาร", d_admin: "ผู้ดูแลระบบ",
-    d_check_status: "สถานะเช็คเครื่องประจำวัน" };
+    d_check_status: "สถานะเช็คเครื่องประจำวัน",
+    d_check_monthly: "รายงานเช็คเครื่องประจำเดือน",
+    d_check_edit: "แก้ไขแบบฟอร์มตรวจประจำวัน" };
   return m[s] || "";
 }
 

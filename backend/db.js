@@ -52,6 +52,11 @@ export const pool = mysql.createPool({
   dateStrings: true,
 });
 
+// Force utf8mb4 on every new connection (access underlying callback pool)
+pool.pool.on("connection", (conn) => {
+  conn.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+});
+
 let dbProbePromise = null;
 
 export async function verifyDbConnection() {

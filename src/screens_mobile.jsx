@@ -6,11 +6,33 @@
 const Dm = window.DATA;
 
 /* ---------------- 5.1 Login ---------------- */
+const REG_ROLES = [
+  ["operator","Operator — พนักงาน/ผู้ปฏิบัติงาน"],
+  ["maintenance","Maintenance — ช่างซ่อมบำรุง (MT)"],
+  ["production","Production — ฝ่ายผลิต (PD)"],
+  ["manager","Manager — ผู้จัดการ"],
+  ["store","Store Keeper — คลังอะไหล่"],
+  ["admin","Admin — ผู้ดูแลระบบ"],
+];
+
+/* role ที่ใช้ Telegram + ลิงก์เชิญเข้ากลุ่ม (ใส่ลิงก์จริงตรงนี้) */
+const TG_GROUP_LINKS = {
+  maintenance: "https://t.me/+6U-BaEf2A6IyN2Q1", // กลุ่ม CAR MT System (ทีมช่าง MT)
+  store: "https://t.me/+r5x_H0mDVmw2ZmNl",       // กลุ่ม Spare Part Alert (คลังอะไหล่)
+};
+const TG_GROUP_LABEL = { maintenance: "กลุ่มทีมช่าง (MT)", store: "กลุ่มคลังอะไหล่ (Store)" };
+const roleUsesTelegram = (r) => r === "maintenance" || r === "store";
+
 function LoginScreen({ ctx }) {
   const scannedMC = ctx.pendingMC ? Dm.machineByCode(ctx.pendingMC) : null;
-  const [role, setRole] = useState(ctx.pendingMC ? "Operator" : "Operator");
+  const [mode, setMode] = useState("login"); // "login" | "register"
   const [user, setUser] = useState("");
   const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [regRole, setRegRole] = useState("operator");
+  const [regTelegram, setRegTelegram] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
   const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth <= 860);
   useEffect(() => {
     const on = () => setNarrow(window.innerWidth <= 860);
@@ -18,12 +40,42 @@ function LoginScreen({ ctx }) {
     window.addEventListener("resize", on);
     return () => window.removeEventListener("resize", on);
   }, []);
-  const roles = ["Operator", "Maintenance", "Production", "Store Keeper", "Manager", "Admin"];
-  const homeFor = {
-    "Operator": "m_machine", "Maintenance": "m_queue", "Production": "d_prodverify",
-    "Store Keeper": "d_master", "Manager": "d_dashboard", "Admin": "d_admin"
+  const switchMode = (m) => { setMode(m); setErr(""); setPw2(""); };
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr("");
+    if (mode === "register") {
+      if (!user.trim()) { setErr("กรุณากรอกชื่อผู้ใช้ (Username)"); return; }
+      if (pw.length < 4) { setErr("รหัสผ่านต้องยาวอย่างน้อย 4 ตัวอักษร"); return; }
+      if (pw !== pw2) { setErr("รหัสผ่านทั้งสองช่องไม่ตรงกัน"); return; }
+      const tg = roleUsesTelegram(regRole) ? regTelegram.trim() : "";
+      setLoading(true);
+      try {
+        const u = await Dm.register({ fullName: user.trim(), username: user.trim(), password: pw, role: regRole, telegramId: tg });
+        try { localStorage.setItem("mt_operator_name", u.name); } catch {}
+        // เด้งเปิดลิงก์กลุ่ม Telegram ตาม role (ถ้ามี + กรอก telegram แล้ว)
+        const link = TG_GROUP_LINKS[regRole];
+        if (tg && link) { try { window.open(link, "_blank"); } catch {} }
+        ctx.login(u);
+      } catch (ex) {
+        setErr(ex.message || "สมัครสมาชิกไม่สำเร็จ");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    if (!user.trim() || !pw) { setErr("กรุณากรอกชื่อผู้ใช้และรหัสผ่าน"); return; }
+    setLoading(true);
+    try {
+      const u = await Dm.login(user.trim(), pw);
+      try { localStorage.setItem("mt_operator_name", u.name); } catch {}
+      ctx.login(u);
+    } catch (ex) {
+      setErr(ex.message || "เข้าสู่ระบบไม่สำเร็จ");
+    } finally {
+      setLoading(false);
+    }
   };
-  const submit = (e) => {e.preventDefault();ctx.login(role, homeFor[role]);};
   return (
     <div style={{ minHeight: "100vh", display: "flex", background: "var(--bg)" }}>
       {/* left brand panel — light cream (hidden on phones) */}
@@ -61,24 +113,41 @@ function LoginScreen({ ctx }) {
           </div>
           }
           <div style={{ marginBottom: 30 }}>
-            <div className="h-lg">เข้าสู่ระบบ</div>
-            <div className="muted small" style={{ marginTop: 4 }}>ยินดีต้อนรับ — กรุณาเข้าสู่ระบบเพื่อใช้งาน</div>
+            <div className="h-lg">{mode === "register" ? "สมัครสมาชิก" : "เข้าสู่ระบบ"}</div>
+            <div className="muted small" style={{ marginTop: 4 }}>
+              {mode === "register" ? "สร้างบัญชีใหม่ — กรอกข้อมูลและตั้งรหัสผ่าน" : "ยินดีต้อนรับ — กรุณาเข้าสู่ระบบเพื่อใช้งาน"}
+            </div>
           </div>
           <div className="field">
             <label>ชื่อผู้ใช้ (Username)</label>
-            <input className="input" value={user} onChange={(e) => setUser(e.target.value)} placeholder="เช่น somchai" />
+            <input className="input" value={user} onChange={(e) => setUser(e.target.value)} autoCapitalize="none" autoCorrect="off" />
           </div>
           <div className="field">
-            <label>รหัสผ่าน (Password)</label>
+            <label>{mode === "register" ? "ตั้งรหัสผ่าน (Password)" : "รหัสผ่าน (Password)"}</label>
             <input className="input" type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="••••••••" />
           </div>
+          {mode === "register" &&
           <div className="field">
-            <label>เข้าสู่ระบบในบทบาท (Role)</label>
-            <select className="select" value={role} onChange={(e) => setRole(e.target.value)}>
-              {roles.map((r) => <option key={r} value={r}>{r} — {Dm.roleLabelTH[r] || (r === "Production" ? "ฝ่ายผลิต" : r)}</option>)}
+            <label>ยืนยันรหัสผ่าน (กรอกอีกครั้ง)</label>
+            <input className="input" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="••••••••" />
+          </div>}
+          {mode === "register" &&
+          <div className="field">
+            <label>บทบาท (Role)</label>
+            <select className="select" value={regRole} onChange={(e) => setRegRole(e.target.value)}>
+              {REG_ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <div className="hint">ตัวอย่าง prototype — เลือกบทบาทเพื่อดูเมนูและสิทธิ์ที่ต่างกัน</div>
-          </div>
+          </div>}
+          {mode === "register" && roleUsesTelegram(regRole) &&
+          <div className="field">
+            <label>Telegram (เบอร์โทร / @username)</label>
+            <input className="input" value={regTelegram} onChange={(e) => setRegTelegram(e.target.value)} placeholder="เช่น @somchai หรือ 08x-xxx-xxxx" autoCapitalize="none" autoCorrect="off" />
+            <div className="hint">สำหรับ {TG_GROUP_LABEL[regRole]} — สมัครเสร็จจะพาเข้ากลุ่ม Telegram ให้</div>
+          </div>}
+          {err &&
+          <div style={{ background:"#fff1f2", border:"1px solid #fca5a5", color:"#9f1239", borderRadius:9, padding:"10px 12px", marginBottom:12, fontSize:13, display:"flex", gap:8, alignItems:"center" }}>
+            <Icon name="alert" size={15} style={{ flex:"none" }} /> {err}
+          </div>}
           {scannedMC &&
           <div style={{ background:"var(--accent-bg)", border:"1px solid var(--accent)", borderRadius:10, padding:"12px 14px", marginBottom:12, display:"flex", gap:10, alignItems:"flex-start" }}>
             <Icon name="qr" size={18} style={{ color:"var(--accent)", flex:"none", marginTop:1 }} />
@@ -88,10 +157,21 @@ function LoginScreen({ ctx }) {
               <div style={{ fontSize:12, color:"var(--ink-3)" }}>หลังเข้าสู่ระบบจะเด้งไปหน้าแจ้งซ่อมทันที</div>
             </div>
           </div>}
-          <button className="btn btn-primary btn-lg btn-block" type="submit" style={{ marginTop: 8 }}>
-            {scannedMC ? <><Icon name="wrench" size={17}/> เข้าสู่ระบบและแจ้งซ่อม</> : <>เข้าสู่ระบบ <Icon name="chevR" size={17}/></>}
+          <button className="btn btn-primary btn-lg btn-block" type="submit" style={{ marginTop: 8 }} disabled={loading}>
+            {loading
+              ? (mode === "register" ? "กำลังสมัคร…" : "กำลังเข้าสู่ระบบ…")
+              : (mode === "register"
+                  ? <><Icon name="user" size={17}/> สมัครสมาชิก</>
+                  : (scannedMC ? <><Icon name="wrench" size={17}/> เข้าสู่ระบบและแจ้งซ่อม</> : <>เข้าสู่ระบบ <Icon name="chevR" size={17}/></>))}
           </button>
-          <div className="tiny muted-2" style={{ textAlign: "center", marginTop: 22, letterSpacing: ".04em" }}>v1.0 · Industrial Maintenance System</div>
+          <div style={{ textAlign: "center", marginTop: 16, fontSize: 13.5, color: "var(--ink-2)" }}>
+            {mode === "register" ? "มีบัญชีอยู่แล้ว? " : "ยังไม่มีบัญชี? "}
+            <a onClick={() => switchMode(mode === "register" ? "login" : "register")}
+               style={{ color: "var(--accent)", fontWeight: 700, cursor: "pointer" }}>
+              {mode === "register" ? "เข้าสู่ระบบ" : "สมัครสมาชิก"}
+            </a>
+          </div>
+          <div className="tiny muted-2" style={{ textAlign: "center", marginTop: 18, letterSpacing: ".04em" }}>v1.0 · Industrial Maintenance System</div>
         </form>
       </div>
     </div>);
@@ -310,12 +390,37 @@ function WarnInline() {
 /* ---------------- 5.3 Report repair form ---------------- */
 function ReportForm({ ctx }) {
   const mc = Dm.machineByCode(ctx.params.mc || Dm.scannedMachine);
-  const [type, setType] = useState("งานซ่อม");
+  const type = "งานซ่อม";
   const [sev, setSev] = useState("High");
   const [desc, setDesc] = useState("");
-  const [reporter, setReporter] = useState(() => ctx.guest ? "" : (Dm.roleUser?.[ctx.role]?.name || ""));
+  const [reporter, setReporter] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [photos, setPhotos] = useState([]); // [{ id, file, url }]
+  const fileRef = useRef(null);
   const sevs = [["Low", "Low"], ["Medium", "Medium"], ["High", "High"], ["Critical", "Critical"]];
+  const MAX_PHOTOS = 6;
+
+  // ปล่อย object URL ทิ้งตอนออกจากหน้า (กัน memory leak)
+  const photosRef = useRef(photos); photosRef.current = photos;
+  useEffect(() => () => { photosRef.current.forEach((p) => { try { URL.revokeObjectURL(p.url); } catch {} }); }, []);
+
+  const onPickPhotos = (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    const room = MAX_PHOTOS - photos.length;
+    if (room <= 0) { ctx.toast("แนบรูปได้สูงสุด " + MAX_PHOTOS + " รูป", "error"); return; }
+    const add = files.slice(0, room).map((f) => ({
+      id: (crypto?.randomUUID?.() || String(Date.now()) + Math.random()),
+      file: f, url: URL.createObjectURL(f),
+    }));
+    setPhotos((prev) => [...prev, ...add]);
+  };
+  const removePhoto = (id) => setPhotos((prev) => {
+    const t = prev.find((p) => p.id === id);
+    if (t) { try { URL.revokeObjectURL(t.url); } catch {} }
+    return prev.filter((p) => p.id !== id);
+  });
 
   if (!mc) return (
     <div className="card card-pad" style={{ textAlign: "center", padding: 40 }}>
@@ -331,6 +436,10 @@ function ReportForm({ ctx }) {
       setSubmitting(true);
       try {
         const result = await window.DATA.createRequest({ machineCode: mc.code, problem: desc.trim(), priority: sev, reporterName: reporter.trim() || null, type });
+        if (photos.length && typeof window.DATA.uploadRequestPhotos === "function") {
+          try { await window.DATA.uploadRequestPhotos(result, photos.map((p) => p.file)); }
+          catch (e) { console.error("[photo-upload] error", e); ctx.toast("บันทึกใบแจ้งแล้ว แต่อัปโหลดรูปไม่สำเร็จ", "error"); }
+        }
         if (typeof Dm.refresh === "function") { await Dm.refresh(); window.dispatchEvent(new Event("mt-data-refresh")); }
         ctx.toast("ส่งใบแจ้งซ่อมแล้ว · " + result, "mail");
         ctx.guest ? ctx.go("m_machine", { mc: mc.code }) : ctx.go("m_requests");
@@ -354,15 +463,6 @@ function ReportForm({ ctx }) {
       </div>
 
       <div className="field">
-        <label>ประเภทงาน</label>
-        <div className="seg" style={{ gridAutoColumns: "1fr 1fr" }}>
-          {["งานซ่อม", "งานสร้าง"].map((t) =>
-          <div key={t} className={"seg-opt" + (type === t ? " on-medium" : "")} onClick={() => setType(t)}>{t}</div>
-          )}
-        </div>
-      </div>
-
-      <div className="field">
         <label>อาการเสีย <span className="req">*</span></label>
         <textarea className="textarea" value={desc} onChange={(e) => setDesc(e.target.value)}
         placeholder="อธิบายอาการที่พบ เช่น Heater element broken, temperature dropped" />
@@ -378,14 +478,28 @@ function ReportForm({ ctx }) {
       </div>
 
       <div className="field">
-        <label>แนบรูปถ่าย</label>
-        <div style={{ display: "flex", gap: 10 }}>
-          <div style={{ width: 84, height: 84, borderRadius: 11, border: "1.5px dashed var(--border-2)", display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center", color: "var(--ink-3)", gap: 4, cursor: "pointer" }}
-          onClick={() => ctx.toast("เปิดกล้อง (prototype)")}>
-            <Icon name="camera" size={22} /><span className="tiny">ถ่ายรูป</span>
+        <label>แนบรูปถ่าย {photos.length > 0 && <span className="muted-2">({photos.length}/{MAX_PHOTOS})</span>}</label>
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple
+          onChange={onPickPhotos} style={{ display: "none" }} />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          {photos.map((p) =>
+          <div key={p.id} style={{ position: "relative", width: 84, height: 84, borderRadius: 11, overflow: "hidden", border: "1px solid var(--border)" }}>
+            <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            <div onClick={() => removePhoto(p.id)} title="ลบรูป"
+              style={{ position: "absolute", top: 3, right: 3, width: 22, height: 22, borderRadius: "50%", background: "rgba(17,17,17,.72)",
+                color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <Icon name="x" size={13} />
+            </div>
           </div>
-          <div className="hint" style={{ alignSelf: "center" }}>แนบรูปหน้างานเพื่อช่วยให้ช่างประเมินได้เร็วขึ้น</div>
+          )}
+          {photos.length < MAX_PHOTOS &&
+          <div onClick={() => fileRef.current && fileRef.current.click()}
+            style={{ width: 84, height: 84, borderRadius: 11, border: "1.5px dashed var(--border-2)", display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center", color: "var(--ink-3)", gap: 4, cursor: "pointer" }}>
+            <Icon name="camera" size={22} /><span className="tiny">ถ่ายรูป</span>
+          </div>}
+          {photos.length === 0 &&
+          <div className="hint" style={{ alignSelf: "center", flex: 1, minWidth: 140 }}>แนบรูปหน้างานเพื่อช่วยให้ช่างประเมินได้เร็วขึ้น</div>}
         </div>
       </div>
 
@@ -396,7 +510,7 @@ function ReportForm({ ctx }) {
         </div>
         <div className="field">
           <label>แผนก</label>
-          <input className="input" defaultValue={mc.dept} />
+          <input className="input" placeholder="ระบุแผนก" />
         </div>
       </div>
 
@@ -728,6 +842,20 @@ function MobileDetail({ ctx }) {
           <div><div className="tiny muted-2">Downtime</div><div className="small mono">{r.downtime != null ? r.downtime + " ชม." : "—"}</div></div>
         </div>
       </div>
+      {r.photos && r.photos.length > 0 &&
+      <div className="card card-pad" style={{ marginBottom: 14 }}>
+        <div className="h-sm" style={{ marginBottom: 10 }}>รูปหน้างาน ({r.photos.length})</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {r.photos.map((p, i) => {
+            const url = /^https?:/.test(p) ? p : (window.API_BASE || "") + p;
+            return (
+            <a key={i} href={url} target="_blank" rel="noreferrer"
+              style={{ width: 90, height: 90, borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)", display: "block" }}>
+              <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            </a>);
+          })}
+        </div>
+      </div>}
       <div className="card card-pad" style={{ marginBottom: 14 }}>
         <div className="h-sm" style={{ marginBottom: 14 }}>สถานะการดำเนินงาน</div>
         <Timeline steps={steps} />

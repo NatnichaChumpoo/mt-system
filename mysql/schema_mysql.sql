@@ -52,7 +52,9 @@ CREATE TABLE app_users (
   id CHAR(36) NOT NULL DEFAULT (UUID()),
   auth_user_id CHAR(36) UNIQUE,
   full_name VARCHAR(128) NOT NULL,
-  role ENUM('operator','technician','supervisor','manager','planner','store','purchasing','admin','maintenance') NOT NULL DEFAULT 'operator',
+  username VARCHAR(64) UNIQUE DEFAULT NULL,
+  password_hash VARCHAR(255) DEFAULT NULL,
+  role ENUM('operator','technician','supervisor','manager','planner','store','purchasing','admin','maintenance','production') NOT NULL DEFAULT 'operator',
   email VARCHAR(190) UNIQUE,
   telegram_chat_id VARCHAR(64),
   phone VARCHAR(32),
@@ -164,6 +166,7 @@ CREATE TABLE maintenance_requests (
   review_round INT NOT NULL DEFAULT 0,
   accepted_by_name VARCHAR(190),
   accepted_at DATETIME NULL,
+  photo_paths TEXT NULL,
   breakdown_start DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   finish_repair DATETIME NULL,
   downtime_hours DECIMAL(10,2)
